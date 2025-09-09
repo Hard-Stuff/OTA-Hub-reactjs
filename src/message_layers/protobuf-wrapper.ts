@@ -1,4 +1,4 @@
-import { AddConnectionProps, DeviceConnectionState, MultiDeviceWhisperer } from "@/base/device-whisperer.js";
+import { AddConnectionProps, DeviceConnectionState, MultiDeviceWhisperer } from "../base/device-whisperer.js";
 
 /*
 ┌────────────────────────────────┐
