@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { DeviceConnectionState, MultiDeviceWhisperer, AddConnectionProps } from "../base/device-whisperer.js";
 
 /*
@@ -27,15 +28,23 @@ export type DeviceObjectResponse = {
 export function WebsocketMultiDeviceWhisperer<
   AppOrMessageLayer extends WebsocketConnectionState
 >(
-  server_url: string,
-  server_port: number,
-  { ...props } = {}
+  {
+    server_url,
+    server_port,
+    ...props
+  }: {
+    server_url: string,
+    server_port: number,
+  }
 ) {
+
+  const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
+
   const defaultOnReceive = (
     uuid: string,
     data: string | ArrayBuffer | Uint8Array
   ) => {
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
     if (!conn) return;
 
     const decoder = new TextDecoder();
@@ -73,7 +82,7 @@ export function WebsocketMultiDeviceWhisperer<
     uuid: string,
     data: string | Uint8Array
   ) => {
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
     if (!conn || !conn.ws) return;
 
     const asString =
@@ -93,7 +102,7 @@ export function WebsocketMultiDeviceWhisperer<
     const MAX_RETRIES = 5;
     const RETRY_DELAY_MS = 2000; // 2 seconds
 
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
     if (!conn) return;
 
     if (conn.ws && conn.ws.readyState === WebSocket.OPEN) {
@@ -149,7 +158,7 @@ export function WebsocketMultiDeviceWhisperer<
         }));
         base.appendLog(uuid, { level: 0, message: "[!] WS disconnected" });
 
-        const updated_conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+        const updated_conn = base.getConnection(uuid);
         if (!updated_conn) {
           base.appendLog(uuid, { level: 0, message: "[!] Connection lost!" });
           return;
@@ -176,7 +185,7 @@ export function WebsocketMultiDeviceWhisperer<
   };
 
   const disconnect = async (uuid: string) => {
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
     if (!conn?.ws) return;
     base.updateConnection(uuid, (c) => ({
       ...c,
@@ -191,8 +200,6 @@ export function WebsocketMultiDeviceWhisperer<
 
     await conn?.onDisconnect?.();
   };
-
-  const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
 
   const addConnection = async (
     { uuid, propCreator }: AddConnectionProps<AppOrMessageLayer>
@@ -241,6 +248,10 @@ export function WebsocketMultiDeviceWhisperer<
       await connect(c.uuid);
     }
   };
+
+  useEffect(() => {
+    base.setIsReady(true) // Ready on page load by default
+  }, [])
 
   return {
     ...base,

@@ -32,7 +32,7 @@ export type DeviceConnectionState = {
   name: string;
   // Comms
   send: (data: string | Uint8Array) => void | Promise<void>;
-  onReceive?: (data: string | Uint8Array) => boolean;
+  onReceive?: (data: string | Uint8Array) => void;
   onConnect?: () => void | Promise<void>;
   onDisconnect?: () => void | Promise<void>;
   // Connection state
@@ -63,6 +63,7 @@ export type DeviceWhispererProps<T extends DeviceConnectionState> = {
   createInitialConnectionState?: (
     uuid: string,
   ) => T;
+  connectOn?: boolean; 
 };
 
 /* One Device Whisperer is used for all like-devices, such as all Serial with Protobuf.
@@ -75,6 +76,9 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
 ) {
   const [connections, setConnections] = useState<T[]>([]);
   const connectionsRef = useRef(connections);
+  const [isReady, setIsReady] = useState<boolean>(false);
+
+  const getConnection = (uuid: string) => connectionsRef.current.find(c => c.uuid === uuid)
 
   const updateConnection = (uuid: string, updater: (c: T) => T) => {
     setConnections(prev => {
@@ -85,7 +89,6 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
       return updated;
     });
   };
-
 
   const updateConnectionName = (uuid: string, name: string) => {
     setConnections((prev) =>
@@ -115,8 +118,7 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
     connectionsRef.current = [...connectionsRef.current, newConnection];
     setConnections(prev => [...prev, newConnection]);
 
-
-    const anyUpdatedConnection = connectionsRef.current.find(c => c.uuid === uuid);
+    const anyUpdatedConnection = getConnection(uuid);
     if (!anyUpdatedConnection) { return ""; }
 
     return uuid;
@@ -140,6 +142,9 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
     updateConnection,
     reconnectAll: () => { },
     updateConnectionName,
-    appendLog
+    getConnection,
+    appendLog,
+    isReady,
+    setIsReady
   };
 }
