@@ -111,7 +111,7 @@ export function ProtobufMultiDeviceWhisperer<
   const sendProtobuf = (uuid: string, message: MessageTX) => {
     const encoded = encodeRX(message);
     const wrapped = wrapLengthPrefixed(encoded);
-    const conn = transportLayer.connectionsRef.current.find(c => c.uuid === uuid);
+    const conn = transportLayer.getConnection(uuid);
 
     console.log("Sending Protobuf:", message, "bytes: ", [...wrapped]);
     conn?.send?.(wrapped);

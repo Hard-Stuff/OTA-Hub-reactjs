@@ -7,6 +7,7 @@ export * from "./message_layers/protobuf-wrapper.js";
 // Transport layers
 export * from "./transport_layers/serial-device-whisperer.js";
 export * from "./transport_layers/websocket-device-whisperer.js";
+export * from "./transport_layers/mqtt-device-whisperer.js";
 
 // Specific types
 export * from "./types/builds.js"

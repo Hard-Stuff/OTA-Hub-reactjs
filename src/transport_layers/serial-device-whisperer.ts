@@ -1,5 +1,6 @@
 import { ESPLoader, FlashOptions, LoaderOptions, Transport } from "esptool-js";
 import { DeviceConnectionState, MultiDeviceWhisperer, AddConnectionProps } from "../base/device-whisperer.js";
+import { useEffect } from "react";
 
 /*
 ┌────────────────────────────────┐
@@ -40,7 +41,7 @@ export function SerialMultiDeviceWhisperer<
     uuid: string,
     data: string | ArrayBuffer | Uint8Array
   ) => {
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
     if (!conn) return;
 
     const decoder = new TextDecoder();
@@ -75,7 +76,7 @@ export function SerialMultiDeviceWhisperer<
   };
 
   const defaultSend = async (uuid: string, data: string | Uint8Array) => {
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
     if (!conn) return;
 
     const asString =
@@ -100,7 +101,7 @@ export function SerialMultiDeviceWhisperer<
   const readLoop = async (uuid: string, transport: Transport) => {
     try {
       while (true) {
-        const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+        const conn = base.getConnection(uuid);
 
         if (!transport?.rawRead || !conn) {
           console.log("Transport failed to load!", conn, conn?.transport, transport?.rawRead);
@@ -134,7 +135,7 @@ export function SerialMultiDeviceWhisperer<
   };
 
   const restartDevice = async (uuid: string, default_transport?: Transport) => {
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
 
     const transport = default_transport ?? conn?.transport;
 
@@ -153,7 +154,7 @@ export function SerialMultiDeviceWhisperer<
     baudrate?: number,
     restart_on_connect = true,
   ) => {
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
     if (!conn?.port) return;
     if (!conn?.transport) { await disconnect(uuid) };
 
@@ -201,7 +202,7 @@ export function SerialMultiDeviceWhisperer<
   };
 
   const disconnect = async (uuid: string, timeout = 2000) => {
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
 
     if (conn?.transport) {
       try {
@@ -258,7 +259,7 @@ export function SerialMultiDeviceWhisperer<
 
   // This function now handles an entire device flashing session
   const handleFlashFirmware = async (uuid: string, assetsToFlash: { blob: Blob, address: number }[]) => {
-    const conn = base.connectionsRef.current.find((c) => c.uuid === uuid);
+    const conn = base.getConnection(uuid);
     if (!conn || !conn.port || assetsToFlash.length === 0) return;
 
     await disconnect(uuid);
@@ -342,6 +343,10 @@ export function SerialMultiDeviceWhisperer<
       })
     );
   };
+
+  useEffect(() => {
+    base.setIsReady(true) // Ready on page load by default
+  }, [])
 
   return {
     ...base,
