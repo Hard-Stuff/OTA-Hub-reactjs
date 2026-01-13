@@ -1,4 +1,4 @@
-import { ESPLoader, FlashOptions, LoaderOptions, Transport } from "esptool-js";
+import { Transport } from "esptool-js";
 import { DeviceConnectionState, MultiDeviceWhisperer, AddConnectionProps } from "../base/device-whisperer.js";
 import { useEffect } from "react";
 
@@ -19,17 +19,8 @@ export type SerialConnectionState = DeviceConnectionState & {
   port?: SerialPort;
   baudrate?: number;
   transport?: Transport;
-  // Flashing
-  isFlashing: boolean;
-  flashProgress: number;
-  flashError: string;
+  slipReadWrite?: boolean;
 };
-
-export type FlashFirmwareProps = {
-  uuid: string
-  firmwareBlob?: Blob,
-  fileArray?: FlashOptions["fileArray"]
-}
 
 export function SerialMultiDeviceWhisperer<
   AppOrMessageLayer extends SerialConnectionState
@@ -79,44 +70,107 @@ export function SerialMultiDeviceWhisperer<
     const conn = base.getConnection(uuid);
     if (!conn) return;
 
-    const asString =
-      typeof data === "string"
-        ? data
-        : btoa(String.fromCharCode(...data));
+    // Convert to bytes
+    const bytes: Uint8Array =
+      typeof data === "string" ? new TextEncoder().encode(data) : data;
 
+    // Log for debugging
     base.appendLog(uuid, {
       level: 3,
-      message: asString,
+      message: typeof data === "string" ? data : btoa(String.fromCharCode(...bytes)),
     });
 
-    const bytes =
-      typeof data === "string"
-        ? new TextEncoder().encode(data)
-        : data;
+    if (!conn.transport) return;
 
-    console.log("conn.transport?.write:", conn.transport?.write, bytes)
-    await conn.transport?.write(bytes);
+    await conn.transport.write(bytes);
+    return;
   };
 
   const readLoop = async (uuid: string, transport: Transport) => {
+    const conn = base.getConnection(uuid);
+    if (!conn) return;
+
+    let readBuffer = ""; // accumulate ASCII/lines
+    let slipBuffer: number[] = []; // accumulate SLIP frames
+    let inSlipFrame = false; // are we inside a SLIP frame?
+    let escapeNext = false;
+
     try {
+      const reader = transport.rawRead();
+
       while (true) {
-        const conn = base.getConnection(uuid);
-
-        if (!transport?.rawRead || !conn) {
-          console.log("Transport failed to load!", conn, conn?.transport, transport?.rawRead);
-          break
-        };
-
-        const reader = transport?.rawRead();
         const { value, done } = await reader.next();
         if (done || !value) break;
-        conn.onReceive?.(value);
+
+        const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+
+        for (let i = 0; i < bytes.length; i++) {
+          const b = bytes[i];
+
+          if (inSlipFrame) {
+            // SLIP decoding
+            if (b === 0xC0) {
+              if (slipBuffer.length > 0) {
+                // complete SLIP frame received
+                const payload = new Uint8Array(slipBuffer);
+                try {
+                  conn.onReceive?.(payload);
+                } catch (e) {
+                  console.error("Failed to decode SLIP frame", e);
+                  base.appendLog(uuid, {
+                    level: 1,
+                    message: "Failed to decode message",
+                    timestamp: new Date(),
+                  });
+                }
+                slipBuffer = [];
+              }
+              inSlipFrame = false;
+              escapeNext = false;
+            } else if (escapeNext) {
+              if (b === 0xDC) slipBuffer.push(0xC0);
+              else if (b === 0xDD) slipBuffer.push(0xDB);
+              else {
+                // protocol violation: discard frame
+                slipBuffer = [];
+                inSlipFrame = false;
+              }
+              escapeNext = false;
+            } else if (b === 0xDB) {
+              escapeNext = true;
+            } else {
+              slipBuffer.push(b);
+            }
+            continue;
+          }
+
+          if (b === 0xC0 && conn.slipReadWrite) {
+            // start of a SLIP frame
+            inSlipFrame = true;
+            slipBuffer = [];
+            escapeNext = false;
+            continue;
+          }
+
+          // treat as normal ASCII text
+          const char = String.fromCharCode(b);
+          readBuffer += char;
+
+          // check for newline
+          let newlineIndex;
+          while ((newlineIndex = readBuffer.indexOf("\n")) >= 0) {
+            const line = readBuffer.slice(0, newlineIndex).replace(/\r$/, "");
+            readBuffer = readBuffer.slice(newlineIndex + 1);
+            if (line.trim()) {
+              conn.onReceive?.(line);
+            }
+          }
+        }
       }
     } catch (e) {
       base.appendLog(uuid, {
         level: 0,
-        message: `[!] Read loop error: ${e}`
+        message: `[!] Read loop error: ${e}`,
       });
       await disconnect(uuid);
     } finally {
@@ -129,7 +183,7 @@ export function SerialMultiDeviceWhisperer<
       }));
       base.appendLog(uuid, {
         level: 0,
-        message: "[!] Serial disconnected"
+        message: "[!] Serial disconnected",
       });
     }
   };
@@ -257,82 +311,6 @@ export function SerialMultiDeviceWhisperer<
     base.removeConnection(uuid);
   };
 
-  // This function now handles an entire device flashing session
-  const handleFlashFirmware = async (uuid: string, assetsToFlash: { blob: Blob, address: number }[]) => {
-    const conn = base.getConnection(uuid);
-    if (!conn || !conn.port || assetsToFlash.length === 0) return;
-
-    await disconnect(uuid);
-    base.updateConnection(uuid, (c) => ({ ...c, isFlashing: true, flashProgress: 0, flashError: undefined }));
-
-    try {
-      // --- Connect ONCE ---
-      const transport = new Transport(conn.port, true);
-      const esploader = new ESPLoader({
-        transport,
-        baudrate: 921600,
-        enableTracing: false
-      } as LoaderOptions);
-
-      try {
-        await esploader.main();
-      } catch (e) { console.log("failed to esploader.main()", e); return; };
-
-      // --- Prepare an ARRAY of files for the library ---
-      const fileArray = await Promise.all(
-        assetsToFlash.map(async ({ blob, address }) => {
-          const arrayBuffer = await blob.arrayBuffer();
-          const binaryString = Array.from(new Uint8Array(arrayBuffer))
-            .map((b) => String.fromCharCode(b))
-            .join("");
-          return { data: binaryString, address };
-        })
-      );
-
-
-      const flashOptions: FlashOptions = {
-        fileArray, // Pass the whole array here
-        flashSize: "keep",
-        flashMode: "qio",
-        flashFreq: "80m",
-        eraseAll: fileArray.length > 1, // Writing more than 1 thing, so likely writing partitions.
-        compress: true,
-        reportProgress: (fileIndex, written, total) => {
-          // You can enhance progress reporting to show which file is being flashed
-          const progress = (written / total) * 100;
-          console.log(`Flashing file ${fileIndex + 1}/${fileArray.length}: ${progress.toFixed(1)}%`);
-          base.updateConnection(uuid, (c) => ({ ...c, flashProgress: progress }));
-        },
-      };
-
-      // --- Call writeFlash ONCE with all files ---
-      try {
-        base.updateConnection(uuid, (c) => ({ ...c, flashProgress: -1 }));
-        await esploader.writeFlash(flashOptions);
-      } catch (e) { console.log("failed to esploader.writeFlash", e) };
-
-      // --- Disconnect ---
-      await esploader.after();
-      try {
-        await transport.disconnect();
-      } catch (e) {
-        console.log("failed to transport.disconnect", e);
-        await conn.port?.readable?.cancel();
-        await conn.port?.writable?.close();
-        await conn.port?.close();
-      }
-
-      base.updateConnection(uuid, (c) => ({ ...c, isFlashing: false, flashProgress: 100 }));
-    } catch (e: any) {
-      console.error(`[${uuid}] Flashing failed:`, e);
-      base.updateConnection(uuid, (c) => ({
-        ...c,
-        isFlashing: false,
-        flashError: e?.message ?? "Unknown error",
-      }));
-    }
-  };
-
   const reconnectAll = async (...connectionProps: any) => {
     const connections = [...base.connectionsRef.current]; // snapshot first
     await Promise.all(
@@ -354,7 +332,6 @@ export function SerialMultiDeviceWhisperer<
     removeConnection,
     connect,
     disconnect,
-    handleFlashFirmware,
     reconnectAll
   };
 }
