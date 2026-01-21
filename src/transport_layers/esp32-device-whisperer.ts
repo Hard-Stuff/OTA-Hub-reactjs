@@ -184,19 +184,12 @@ export function ESP32MultiDeviceWhisperer<
         level: 0,
         message: `[!] Read loop error: ${e}`,
       });
-      await disconnect(uuid);
     } finally {
-      base.updateConnection(uuid, (c) => ({
-        ...c,
-        transport: null,
-        isConnected: false,
-        isConnecting: false,
-        autoConnect: false,
-      }));
       base.appendLog(uuid, {
         level: 0,
         message: "[!] Serial disconnected",
       });
+      await disconnect(uuid);
     }
   };
 
@@ -221,14 +214,22 @@ export function ESP32MultiDeviceWhisperer<
     restart_on_connect = true,
   ) => {
     const conn = base.getConnection(uuid);
-    if (!conn?.port) return;
-    if (!conn?.transport) { await disconnect(uuid) };
+    if (!conn) return;
+
+    let port = conn?.port;
+
+    if (!port) {
+      port = await navigator.serial.requestPort({
+        filters: [{ usbVendorId: 0x303a }]
+      });
+      base.updateConnection(uuid, (c) => ({ ...c, port }));
+    };
 
     base.updateConnection(uuid, (c) => ({ ...c, isConnecting: true }));
 
     const use_baudrate = baudrate ?? conn.baudrate ?? 115200;
 
-    const transport = new Transport(conn.port, false, false);
+    const transport = new Transport(port, false, false);
 
     try {
       const esploader = new ESPLoader({
@@ -299,6 +300,7 @@ export function ESP32MultiDeviceWhisperer<
     // Always clear the transport and reset connection state
     base.updateConnection(uuid, (c) => ({
       ...c,
+      port: null,
       transport: null,
       isConnected: false,
       isConnecting: false,
@@ -354,7 +356,8 @@ export function ESP32MultiDeviceWhisperer<
     const conn = base.getConnection(uuid);
     if (!conn || !conn.port || assetsToFlash.length === 0) return;
 
-    await base.disconnect(uuid);
+    await disconnect(uuid);
+
     base.updateConnection(uuid, (c) => ({ ...c, isFlashing: true, flashProgress: 0, flashError: undefined }));
 
     try {
