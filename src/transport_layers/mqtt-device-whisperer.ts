@@ -31,7 +31,8 @@ export function MQTTMultiDeviceWhisperer<
     clientId = undefined,
     username = undefined,
     password = undefined,
-    autoConnect = true,
+    serverAutoConnect = true,
+    serverConnectOn = false,
     ...props
   }: {
     serverUrl: string,
@@ -42,7 +43,8 @@ export function MQTTMultiDeviceWhisperer<
     clientId?: string,
     username?: string,
     password?: string,
-    autoConnect?: boolean,
+    serverAutoConnect?: boolean,
+    serverConnectOn?: boolean,
   } & DeviceWhispererProps<AppOrMessageLayer>
 ) {
 
@@ -293,9 +295,11 @@ export function MQTTMultiDeviceWhisperer<
     addingConnections.current.delete(uuid);
 
     // Connect immediately
-    connect(uuid)
+      const conn = base.getConnection(uuid)
+     if (conn?.autoConnect)
+        await connect(uuid)
 
-    return uuid;
+      return uuid
   }
 
   const removeConnection = async (uuid: string) => {
@@ -314,11 +318,11 @@ export function MQTTMultiDeviceWhisperer<
   };
 
   useEffect(() => {
-    if (!(autoConnect || props.connectOn)) return;
+    if (!(serverAutoConnect || serverConnectOn)) return;
 
     const cleanup = connectToMQTTServer();
     return cleanup;
-  }, [serverUrl, props.connectOn]);
+  }, [serverUrl, serverConnectOn]);
 
   return {
     ...base,

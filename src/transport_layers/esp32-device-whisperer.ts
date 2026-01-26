@@ -318,7 +318,7 @@ export function ESP32MultiDeviceWhisperer<
       filters: [{ usbVendorId: 0x303a }]
     });
 
-    return await base.addConnection({
+    const return_uuid = await base.addConnection({
       uuid,
       propCreator: (id) => {
         const props = propCreator?.(id);
@@ -333,6 +333,12 @@ export function ESP32MultiDeviceWhisperer<
         } as Partial<AppOrMessageLayer>;
       }
     });
+
+    const conn = base.getConnection(return_uuid)
+    if (conn?.autoConnect)
+      await connect(return_uuid)
+
+    return return_uuid
   };
 
   const removeConnection = async (uuid: string) => {
