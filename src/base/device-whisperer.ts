@@ -65,7 +65,6 @@ export type DeviceWhispererProps<T extends DeviceConnectionState> = {
   createInitialConnectionState?: (
     uuid: string,
   ) => Partial<T>;
-  connectOn?: boolean; 
 };
 
 /* One Device Whisperer is used for all like-devices, such as all Serial with Protobuf.

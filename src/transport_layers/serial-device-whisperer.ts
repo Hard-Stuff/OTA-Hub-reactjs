@@ -339,7 +339,7 @@ export function SerialMultiDeviceWhisperer<
         filters: []
       });
 
-      return await base.addConnection({
+      const return_uuid =  await base.addConnection({
         uuid,
         propCreator: (id) => {
           const props = propCreator?.(id);
@@ -355,6 +355,11 @@ export function SerialMultiDeviceWhisperer<
           } as Partial<AppOrMessageLayer>;
         }
       });
+      const conn = base.getConnection(return_uuid)
+      if (conn?.autoConnect)
+        await connect(return_uuid)
+
+      return return_uuid
     } catch (e) {
       console.log("User cancelled or no device selected");
     }
