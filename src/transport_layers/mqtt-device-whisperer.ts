@@ -51,7 +51,7 @@ export function MQTTMultiDeviceWhisperer<
   const clientRef = useRef<mqtt.MqttClient | null>(null);
   const isUnmountedRef = useRef(false);
   const watchdogTimers = useRef<Record<string, { ping?: NodeJS.Timeout, warn?: NodeJS.Timeout, fail?: NodeJS.Timeout } | undefined>>({});
-  const addingConnections = new Set<string>();
+  const addingConnections = useRef<Set<string>>(new Set());
 
   const connectToMQTTServer = () => {
     isUnmountedRef.current = false;
@@ -267,7 +267,7 @@ export function MQTTMultiDeviceWhisperer<
       return
     }
 
-    if (base.connectionsRef.current.some(c => c.uuid === uuid) || addingConnections.has(uuid)) {
+    if (base.connectionsRef.current.some(c => c.uuid === uuid) || addingConnections.current.has(uuid)) {
       return;
     }
 
@@ -277,16 +277,20 @@ export function MQTTMultiDeviceWhisperer<
         const props = propCreator?.(id);
 
         return {
-          send: props?.send || ((d) => defaultSend(id, d)),
-          onReceive: props?.onReceive || ((d) => defaultOnReceive(id, d)),
-          touchHeartbeat: props?.touchHeartbeat || (() => touchHeartbeat(id)),
+          // Defaults, may be overridden by props
+          send: (d) => defaultSend(id, d),
+          onReceive: (d) => defaultOnReceive(id, d),
+          touchHeartbeat: () => touchHeartbeat(id),
+          // Initial connection state
+          ...base.createInitialConnectionState(id),
+          // From props
           ...props
         } as Partial<AppOrMessageLayer>;
       }
     });
 
     // Delete this adding connections item
-    addingConnections.delete(uuid);
+    addingConnections.current.delete(uuid);
 
     // Connect immediately
     connect(uuid)
@@ -310,9 +314,11 @@ export function MQTTMultiDeviceWhisperer<
   };
 
   useEffect(() => {
-    if (autoConnect || props.connectOn)
-      connectToMQTTServer()
-  }, [serverUrl, props.connectOn])
+    if (!(autoConnect || props.connectOn)) return;
+
+    const cleanup = connectToMQTTServer();
+    return cleanup;
+  }, [serverUrl, props.connectOn]);
 
   return {
     ...base,

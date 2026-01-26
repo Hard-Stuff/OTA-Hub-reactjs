@@ -323,9 +323,12 @@ export function ESP32MultiDeviceWhisperer<
       propCreator: (id) => {
         const props = propCreator?.(id);
         return {
-          send: props?.send || ((d) => defaultSend(id, d)),
-          onReceive: props?.onReceive || ((d) => defaultOnReceive(id, d)),
+          send: (d) => defaultSend(id, d),
+          onReceive: (d) => defaultOnReceive(id, d),
           port,
+          // Initial connection state
+          ...base.createInitialConnectionState(id),
+          // From props
           ...props
         } as Partial<AppOrMessageLayer>;
       }
