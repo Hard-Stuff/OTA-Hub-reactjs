@@ -1,6 +1,6 @@
 {
   "name": "ota-hub-reactjs",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "ReactJS tools for building web apps to flash MCU devices such as esp32, brought to you by OTA Hub.",
   "type": "module",
   "main": "dist/index.js",
