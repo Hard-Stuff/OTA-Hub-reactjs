@@ -335,9 +335,8 @@ export function SerialMultiDeviceWhisperer<
 
   const addConnection = async ({ uuid, propCreator }: AddConnectionProps<AppOrMessageLayer>) => {
     try {
-      // NATIVE WEBUSB REQUEST
       const device = await navigator.usb.requestDevice({
-        filters: [] // Espressif Vendor ID
+        filters: []
       });
 
       return await base.addConnection({
@@ -345,9 +344,13 @@ export function SerialMultiDeviceWhisperer<
         propCreator: (id) => {
           const props = propCreator?.(id);
           return {
-            send: props?.send || ((d) => defaultSend(id, d)),
-            onReceive: props?.onReceive || ((d) => defaultOnReceive(id, d)),
-            device, // Storing USBDevice instead of SerialPort
+            // Defaults, may be overridden by props
+            send: (d) => defaultSend(id, d),
+            onReceive: (d) => defaultOnReceive(id, d),
+            device,
+            // Initial connection state
+            ...base.createInitialConnectionState(id),
+            // From props
             ...props
           } as Partial<AppOrMessageLayer>;
         }

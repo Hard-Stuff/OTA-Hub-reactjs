@@ -64,7 +64,7 @@ export function createDefaultInitialDeviceState<T extends DeviceConnectionState>
 export type DeviceWhispererProps<T extends DeviceConnectionState> = {
   createInitialConnectionState?: (
     uuid: string,
-  ) => T;
+  ) => Partial<T>;
   connectOn?: boolean; 
 };
 
@@ -73,7 +73,7 @@ export type DeviceWhispererProps<T extends DeviceConnectionState> = {
 */
 export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
   {
-    createInitialConnectionState = createDefaultInitialDeviceState as (uuid: string) => T,
+    createInitialConnectionState = createDefaultInitialDeviceState as (uuid: string) => Partial<T>,
   }: DeviceWhispererProps<T> = {}
 ) {
   const [connections, setConnections] = useState<T[]>([]);
@@ -113,6 +113,7 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
     const props = propCreator?.(uuid);
 
     const newConnection: T = {
+      ...createDefaultInitialDeviceState(uuid),
       ...createInitialConnectionState(uuid),
       ...props
     };
@@ -147,6 +148,7 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
     getConnection,
     appendLog,
     isReady,
-    setIsReady
+    setIsReady,
+    createInitialConnectionState
   };
 }
