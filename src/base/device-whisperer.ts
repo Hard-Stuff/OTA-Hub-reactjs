@@ -40,7 +40,8 @@ export type DeviceConnectionState = {
   isConnected: boolean;
   isConnecting: boolean;
   logs: LogLine[];
-  readBufferLeftover: string; // Used in quite a few lower levels.
+  readBufferLeftover: string;
+  readBufferLeftoverAsBytes: Uint8Array;
 }
 
 // Initial, generic state for the generic device
@@ -55,6 +56,7 @@ export function createDefaultInitialDeviceState<T extends DeviceConnectionState>
     isConnecting: false,
     logs: [],
     readBufferLeftover: "",
+    readBufferLeftoverAsBytes: new Uint8Array([]),
     ...props
   };
 }
