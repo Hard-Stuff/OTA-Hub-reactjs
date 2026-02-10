@@ -17,7 +17,8 @@ import { useEffect, useState } from "react";
 
 export class UsbTransport {
   public device: USBDevice;
-  public interfaceNumber: number = 0;
+  public controlInterface: number = 0;
+  public dataInterface: number = 1;
   public endpointIn: number = 0;
   public endpointOut: number = 0;
 
@@ -39,30 +40,47 @@ export class UsbTransport {
       await this.device.selectConfiguration(1);
     }
 
-    // Find the CDC Data interface (usually class 10) or just the first one with Bulk endpoints
     const interfaces = this.device.configuration?.interfaces || [];
-    let targetInterface: USBInterface | undefined;
 
-    for (const iface of interfaces) {
+    let ctrlIface: USBInterface | undefined;
+    let dataIface: USBInterface | undefined;
+
+    dataIface = interfaces.find(iface => {
       const endpoints = iface.alternate.endpoints;
-      const hasIn = endpoints.some(e => e.direction === 'in' && e.type === 'bulk');
-      const hasOut = endpoints.some(e => e.direction === 'out' && e.type === 'bulk');
+      return endpoints.some(e => e.direction === 'in' && e.type === 'bulk') &&
+        endpoints.some(e => e.direction === 'out' && e.type === 'bulk');
+    });
 
-      if (hasIn && hasOut) {
-        targetInterface = iface;
-        break;
+    if (dataIface) {
+      this.dataInterface = dataIface.interfaceNumber;
+
+      ctrlIface = interfaces.find(i => i.interfaceNumber === this.dataInterface - 1)
+        || interfaces.find(i => i.alternate.interfaceClass === 2);
+
+      this.controlInterface = ctrlIface ? ctrlIface.interfaceNumber : this.dataInterface;
+    }
+
+    if (!dataIface) {
+      throw new Error("No serial-compatible Bulk interface found.");
+    }
+
+    // Note: On Android, if the OS has claimed Interface 0, this first call will fail.
+    try {
+      if (this.controlInterface !== this.dataInterface) {
+        await this.device.claimInterface(this.controlInterface);
       }
+    } catch (e) {
+      console.warn("Could not claim Control Interface (OS locked?). Proceeding to Data...", e);
+      // We continue, but setSignals might fail later.
     }
 
-    if (!targetInterface) {
-      throw new Error("No serial-compatible interface found on device.");
+    try {
+      await this.device.claimInterface(this.dataInterface);
+    } catch (e) {
+      throw new Error(`Failed to claim Data Interface. Android OS has locked the device driver. Try using a 'Vendor Specific' USB Class device or a native Serial App workaround.`);
     }
 
-    this.interfaceNumber = targetInterface.interfaceNumber;
-    await this.device.claimInterface(this.interfaceNumber);
-
-    // Map endpoints
-    const endpoints = targetInterface.alternate.endpoints;
+    const endpoints = dataIface.alternate.endpoints;
     this.endpointIn = endpoints.find(e => e.direction === 'in' && e.type === 'bulk')!.endpointNumber;
     this.endpointOut = endpoints.find(e => e.direction === 'out' && e.type === 'bulk')!.endpointNumber;
 
@@ -70,14 +88,15 @@ export class UsbTransport {
     await this.setSignals({ dtr: false, rts: false });
   }
 
+
   /**
      * Writes bytes to the device
      */
   async write(data: Uint8Array): Promise<void> {
     if (!this.device.opened) return;
-    // Cast to 'unknown' then 'BufferSource' to satisfy the strict type definition
     await this.device.transferOut(this.endpointOut, data as unknown as BufferSource);
   }
+
   /**
    * Reads bytes from the device.
    * Unlike Serial, this does not use a stream reader; it performs a single transfer.
@@ -95,14 +114,13 @@ export class UsbTransport {
     return null;
   }
 
+
   /**
    * Sets DTR/RTS lines. Crucial for resetting the ESP32.
    * Uses standard CDC-ACM request 0x22.
    */
   async setSignals({ dtr, rts }: { dtr: boolean; rts: boolean }) {
     if (!this.device.opened) return;
-
-    // CDC-ACM: DTR is bit 0, RTS is bit 1
     const value = (Number(dtr) | (Number(rts) << 1));
 
     await this.device.controlTransferOut({
@@ -110,7 +128,7 @@ export class UsbTransport {
       recipient: 'interface',
       request: UsbTransport.SET_CONTROL_LINE_STATE,
       value: value,
-      index: this.interfaceNumber
+      index: this.controlInterface
     });
   }
 
@@ -121,22 +139,27 @@ export class UsbTransport {
     // 4 bytes: baud (LE), 1 byte: stop bits, 1 byte: parity, 1 byte: data bits
     const buffer = new ArrayBuffer(7);
     const view = new DataView(buffer);
-    view.setUint32(0, baud, true); // Little Endian
-    view.setUint8(4, 0); // 1 stop bit
-    view.setUint8(5, 0); // No parity
-    view.setUint8(6, 8); // 8 data bits
+    view.setUint32(0, baud, true);
+    view.setUint8(4, 0);
+    view.setUint8(5, 0);
+    view.setUint8(6, 8);
 
     await this.device.controlTransferOut({
       requestType: 'class',
       recipient: 'interface',
       request: UsbTransport.SET_LINE_CODING,
       value: 0,
-      index: this.interfaceNumber
+      index: this.controlInterface
     }, buffer);
   }
 
   async disconnect() {
     if (this.device.opened) {
+      // Release both
+      try { await this.device.releaseInterface(this.dataInterface); } catch (e) { }
+      if (this.controlInterface !== this.dataInterface) {
+        try { await this.device.releaseInterface(this.controlInterface); } catch (e) { }
+      }
       await this.device.close();
     }
   }
@@ -339,7 +362,7 @@ export function SerialMultiDeviceWhisperer<
         filters: []
       });
 
-      const return_uuid =  await base.addConnection({
+      const return_uuid = await base.addConnection({
         uuid,
         propCreator: (id) => {
           const props = propCreator?.(id);
