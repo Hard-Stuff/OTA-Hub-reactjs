@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ESPLoader, FlashOptions, LoaderOptions, Transport } from "esptool-js";
-import { AddConnectionProps, DeviceConnectionState, MultiDeviceWhisperer } from "../base/device-whisperer.js";
+import { AddConnectionProps, DeviceConnectionState, DeviceWhispererProps, MultiDeviceWhisperer } from "../base/device-whisperer.js";
 
 /*
 ┌────────────────────────────────┐
@@ -35,47 +35,23 @@ export type FlashFirmwareProps = {
 
 export function ESP32MultiDeviceWhisperer<
   AppOrMessageLayer extends ESP32ConnectionState
->({ ...props } = {}) {
-
+>(
+  { releasePortByDefault, ...props }: { releasePortByDefault: boolean } & DeviceWhispererProps<AppOrMessageLayer>
+    = { releasePortByDefault: true }) {
 
   const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
+  const defaultOnReceive = (uuid: string, data: string | Uint8Array) => {
+    const text = typeof data === "string"
+      ? data
+      : new TextDecoder().decode(data);
 
-  const defaultOnReceive = (
-    uuid: string,
-    data: string | ArrayBuffer | Uint8Array
-  ) => {
-    const conn = base.getConnection(uuid);
-    if (!conn) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
 
-    const decoder = new TextDecoder();
-    let bytes: Uint8Array;
-
-    if (typeof data === "string") {
-      bytes = new TextEncoder().encode(data);
-    } else if (data instanceof ArrayBuffer) {
-      bytes = new Uint8Array(data);
-    } else {
-      bytes = data;
-    }
-
-    const asText = decoder.decode(bytes);
-    const combined = conn.readBufferLeftover + asText;
-    const lines = combined.split("\r\n");
-
-    base.updateConnection(uuid, (c) => ({
-      ...c,
-      readBufferLeftover: lines.pop() || ""
-    }));
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed) {
-        base.appendLog(uuid, {
-          level: 2,
-          message: trimmed,
-        });
-      }
-    }
+    base.appendLog(uuid, {
+      level: 2,
+      message: trimmed,
+    });
   };
 
   const defaultSend = async (uuid: string, data: string | Uint8Array) => {
@@ -99,9 +75,7 @@ export function ESP32MultiDeviceWhisperer<
   };
 
   const readLoop = async (uuid: string, transport: Transport) => {
-    const conn = base.getConnection(uuid);
-    if (!conn) return;
-
+    const textDecoder = new TextDecoder();
     let readBuffer = ""; // accumulate ASCII/lines
     let slipBuffer: number[] = []; // accumulate SLIP frames
     let inSlipFrame = false; // are we inside a SLIP frame?
@@ -111,6 +85,9 @@ export function ESP32MultiDeviceWhisperer<
       const reader = transport.rawRead();
 
       while (true) {
+        const conn = base.getConnection(uuid);
+        if (!conn) { console.log("Kack!"); return };
+
         const { value, done } = await reader.next();
         if (done || !value) break;
 
@@ -164,9 +141,8 @@ export function ESP32MultiDeviceWhisperer<
             continue;
           }
 
-          // treat as normal ASCII text
-          const char = String.fromCharCode(b);
-          readBuffer += char;
+          // treat as normal text (correctly)
+          readBuffer += textDecoder.decode(new Uint8Array([b]), { stream: true });
 
           // check for newline
           let newlineIndex;
@@ -300,8 +276,8 @@ export function ESP32MultiDeviceWhisperer<
     // Always clear the transport and reset connection state
     base.updateConnection(uuid, (c) => ({
       ...c,
-      port: null,
-      transport: null,
+      port: releasePortByDefault ? null : c.port,
+      transport: releasePortByDefault ? null : c.transport,
       isConnected: false,
       isConnecting: false,
       autoConnect: false,
@@ -349,16 +325,18 @@ export function ESP32MultiDeviceWhisperer<
   };
 
   const reconnectAll = async (...connectionProps: any) => {
-    const connections = [...base.connectionsRef.current]; // snapshot first
+    const connectionIds = base.connections.map(c => c.uuid);
+
     await Promise.all(
-      connections.map(async (c) => {
+      connectionIds.map(async (id) => {
+        const c = base.getConnection(id);
+        if (!c) return;
         await disconnect(c.uuid);
         await new Promise((res) => setTimeout(res, 250));
         return connect(c.uuid, ...connectionProps);
       })
     );
   };
-
 
   // This function now handles an entire device flashing session
   const handleFlashFirmware = async (uuid: string, assetsToFlash: { blob: Blob, address: number }[]) => {

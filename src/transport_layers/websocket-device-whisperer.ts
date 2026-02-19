@@ -60,7 +60,7 @@ export function WebsocketMultiDeviceWhisperer<
 
     const asText = decoder.decode(bytes);
     const combined = conn.readBufferLeftover + asText;
-    const lines = combined.split("\n");
+    const lines = combined.split(/\r?\n/);
 
     base.updateConnection(uuid, (c) => ({
       ...c,
@@ -239,14 +239,18 @@ export function WebsocketMultiDeviceWhisperer<
     }
   };
 
-  const reconnectAll = async () => {
-    for (const c of base.connectionsRef.current) {
-      await disconnect(c.uuid);
-      await new Promise((res) => setTimeout(res, 250));
-    }
-    for (const c of base.connectionsRef.current) {
-      await connect(c.uuid);
-    }
+  const reconnectAll = async (...connectionProps: any) => {
+    const connectionIds = base.connections.map(c => c.uuid);
+
+    await Promise.all(
+      connectionIds.map(async (id) => {
+        const c = base.getConnection(id);
+        if (!c) return;
+        await disconnect(c.uuid);
+        await new Promise((res) => setTimeout(res, 250));
+        return connect(c.uuid, ...connectionProps);
+      })
+    );
   };
 
   useEffect(() => {

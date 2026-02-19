@@ -269,7 +269,7 @@ export function MQTTMultiDeviceWhisperer<
       return
     }
 
-    if (base.connectionsRef.current.some(c => c.uuid === uuid) || addingConnections.current.has(uuid)) {
+    if (base.connections.some(c => c.uuid === uuid) || addingConnections.current.has(uuid)) {
       return;
     }
 
@@ -295,11 +295,11 @@ export function MQTTMultiDeviceWhisperer<
     addingConnections.current.delete(uuid);
 
     // Connect immediately
-      const conn = base.getConnection(uuid)
-     if (conn?.autoConnect)
-        await connect(uuid)
+    const conn = base.getConnection(uuid)
+    if (conn?.autoConnect)
+      await connect(uuid)
 
-      return uuid
+    return uuid
   }
 
   const removeConnection = async (uuid: string) => {
@@ -308,13 +308,17 @@ export function MQTTMultiDeviceWhisperer<
   };
 
   const reconnectAll = async () => {
-    for (const c of base.connectionsRef.current) {
-      await disconnect(c.uuid);
-      await new Promise((res) => setTimeout(res, 250));
-    }
-    for (const c of base.connectionsRef.current) {
-      await connect(c.uuid);
-    }
+    const connectionIds = base.connections.map(c => c.uuid);
+
+    await Promise.all(
+      connectionIds.map(async (id) => {
+        const c = base.getConnection(id);
+        if (!c) return;
+        await disconnect(c.uuid);
+        await new Promise((res) => setTimeout(res, 250));
+        return connect(c.uuid);
+      })
+    );
   };
 
   useEffect(() => {

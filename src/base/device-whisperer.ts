@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, useState } from "react";
-import { uniqueNamesGenerator, animals } from "unique-names-generator";
 
 /*
 ┌────────────────────────────────┐
@@ -19,7 +18,7 @@ export type LogMessage = string | number | boolean | Record<string, any> | any[]
 export type LogLine = {
   level: number;
   message: LogMessage;
-  timestamp?: string | Date;
+  timestamp?: Date;
 };
 
 type PropCreatorProps<T> = (uuid: string) => Partial<T> | undefined;
@@ -76,39 +75,38 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
   }: DeviceWhispererProps<T> = {}
 ) {
   const [connections, setConnections] = useState<T[]>([]);
-  const connectionsRef = useRef(connections);
+  const connectionsRef = useRef<Map<string, T>>(new Map());
   const [isReady, setIsReady] = useState<boolean>(false);
 
-  const getConnection = (uuid: string) => connectionsRef.current.find(c => c.uuid === uuid)
 
+  // ---------- GET ----------
+  const getConnection = (uuid: string) => connectionsRef.current.get(uuid);
+
+  // ---------- UPDATE ----------
   const updateConnection = (uuid: string, updater: (c: T) => T) => {
-    setConnections(prev => {
-      const updated = prev.map((c) =>
-        c.uuid === uuid ? updater(c) : c
-      );
-      connectionsRef.current = updated;
-      return updated;
-    });
+    const current = connectionsRef.current.get(uuid);
+    if (!current) return;
+
+    const next = updater(current);
+    connectionsRef.current.set(uuid, next);
+    setConnections(Array.from(connectionsRef.current.values()));
   };
 
   const updateConnectionName = (uuid: string, name: string) => {
-    setConnections((prev) =>
-      prev.map((c) => (c.uuid === uuid ? { ...c, name } : c))
-    );
+    updateConnection(uuid, (c) => ({ ...c, name }));
   };
 
   const appendLog = (uuid: string, log: LogLine) => {
-    if (!log.timestamp) {
-      log.timestamp = new Date();
-    }
+    if (!log.timestamp) log.timestamp = new Date();
     updateConnection(uuid, (c) => ({
       ...c,
       logs: [...c.logs.slice(-199), log],
     }));
   };
 
+  // ---------- ADD ----------
   const addConnection = async ({ uuid, propCreator }: AddConnectionProps<T>) => {
-    uuid = uuid ?? uniqueNamesGenerator({ dictionaries: [animals] });
+    uuid = uuid ?? `unnamed_device_${connectionsRef.current.size}`;
     const props = propCreator?.(uuid);
 
     const newConnection: T = {
@@ -117,26 +115,26 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
       ...props
     };
 
-    connectionsRef.current = [...connectionsRef.current, newConnection];
-    setConnections(prev => [...prev, newConnection]);
-
-    const anyUpdatedConnection = getConnection(uuid);
-    if (!anyUpdatedConnection) { return ""; }
+    connectionsRef.current.set(uuid, newConnection);
+    setConnections(Array.from(connectionsRef.current.values()));
 
     return uuid;
   };
 
+  // ---------- REMOVE ----------
   const removeConnection = (uuid: string) => {
-    setConnections((prev) => prev.filter((c) => c.uuid !== uuid));
+    connectionsRef.current.delete(uuid);
+    setConnections(Array.from(connectionsRef.current.values()));
   };
 
+  // ---------- EFFECT ----------
   useEffect(() => {
-    connectionsRef.current = connections;
-  }, [connections]);
+    // initial snapshot
+    setConnections(Array.from(connectionsRef.current.values()));
+  }, []);
 
   return {
     connections,
-    connectionsRef,
     addConnection,
     removeConnection,
     connect: (_uuid: string) => { },

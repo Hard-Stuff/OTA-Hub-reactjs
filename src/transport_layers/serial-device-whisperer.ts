@@ -1,5 +1,5 @@
-import { DeviceConnectionState, MultiDeviceWhisperer, AddConnectionProps } from "../base/device-whisperer.js";
-import { useEffect, useState } from "react";
+import { DeviceConnectionState, MultiDeviceWhisperer, AddConnectionProps, DeviceWhispererProps } from "../base/device-whisperer.js";
+import { useEffect, useRef, useState } from "react";
 
 /*
 ┌────────────────────────────────┐
@@ -174,9 +174,16 @@ export type SerialConnectionState = DeviceConnectionState & {
 
 export function SerialMultiDeviceWhisperer<
   AppOrMessageLayer extends SerialConnectionState
->({ ...props } = {}) {
+>({ ...props }: DeviceWhispererProps<AppOrMessageLayer> = {}) {
 
   const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
+
+  const releasePortByDefaultRef = useRef(false);
+  const [releasePortByDefaultState, setReleasePortByDefaultState] = useState(false);
+
+  useEffect(() => {
+    releasePortByDefaultRef.current = releasePortByDefaultState;
+  }, [releasePortByDefaultState])
 
   // --- Message Processing (Identical logic, just copied over) ---
   const defaultOnReceive = (uuid: string, data: string | ArrayBuffer | Uint8Array) => {
@@ -192,7 +199,7 @@ export function SerialMultiDeviceWhisperer<
 
     const asText = decoder.decode(bytes);
     const combined = conn.readBufferLeftover + asText;
-    const lines = combined.split("\r\n");
+    const lines = combined.split("\n");
 
     base.updateConnection(uuid, (c) => ({ ...c, readBufferLeftover: lines.pop() || "" }));
 
@@ -349,7 +356,7 @@ export function SerialMultiDeviceWhisperer<
     }
     base.updateConnection(uuid, c => ({
       ...c,
-      transport: null,
+      transport: releasePortByDefaultRef.current ? null : c.transport,
       isConnected: false,
       isConnecting: false
     }));
@@ -392,8 +399,20 @@ export function SerialMultiDeviceWhisperer<
     await disconnect(uuid);
     base.removeConnection(uuid);
   };
+  
+  const reconnectAll = async (...connectionProps: any) => {
+    const connectionIds = base.connections.map(c => c.uuid);
 
-  const reconnectAll = async () => { /* Same logic as before */ };
+    await Promise.all(
+      connectionIds.map(async (id) => {
+        const c = base.getConnection(id);
+        if (!c) return;
+        await disconnect(c.uuid);
+        await new Promise((res) => setTimeout(res, 250));
+        return connect(c.uuid, ...connectionProps);
+      })
+    );
+  };
 
   useEffect(() => { base.setIsReady(true) }, []);
 
@@ -403,6 +422,8 @@ export function SerialMultiDeviceWhisperer<
     removeConnection,
     connect,
     disconnect,
-    reconnectAll
+    reconnectAll,
+    releasePortByDefault: releasePortByDefaultState,
+    setReleasePortByDefault: setReleasePortByDefaultState
   };
 }
