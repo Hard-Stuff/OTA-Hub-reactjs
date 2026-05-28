@@ -30,6 +30,11 @@ export type DeviceConnectionState = {
   deviceMac?: string;
   name: string;
   // Comms
+  
+  /**
+   * Default device send helper.
+   * This is a utility function which may better be replaced with transport specific send functions (e.g. MQTT has publish, Serial has write etc.)
+   */
   send: (data: string | Uint8Array) => void | Promise<void>;
   onReceive?: (data: string | Uint8Array) => void;
   onConnect?: () => void | Promise<void>;
@@ -77,6 +82,7 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
   const [connections, setConnections] = useState<T[]>([]);
   const connectionsRef = useRef<Map<string, T>>(new Map());
   const [isReady, setIsReady] = useState<boolean>(false);
+  const [focussedConnection, setFocussedConnection] = useState<string | undefined>();
 
 
   // ---------- GET ----------
@@ -134,6 +140,8 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
   }, []);
 
   return {
+    focussedConnection,
+    setFocussedConnection,
     connections,
     addConnection,
     removeConnection,
