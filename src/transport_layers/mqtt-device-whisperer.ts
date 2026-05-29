@@ -376,15 +376,15 @@ export function MQTTMultiDeviceWhisperer<
   const addConnection = async (
     { uuid, propCreator }: AddConnectionProps<AppOrMessageLayer>
   ) => {
-    if (!clientRef.current || isUnmountedRef.current) return;
+    if (!clientRef.current || isUnmountedRef.current) return '';
 
     if (!uuid) {
       Error("In MQTT you MUST define a UUID otherwise we don't know what device we're connecting to!")
-      return
+      return ''
     }
 
     if (base.connections.some(c => c.uuid === uuid) || addingConnections.current.has(uuid)) {
-      return;
+      return '';
     }
 
     await base.addConnection({

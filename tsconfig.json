@@ -4,14 +4,15 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "jsx": "react-jsx",
-    "lib": ["DOM", "ES2020"],
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "types": ["w3c-web-serial", "w3c-web-usb"],
     "declaration": true,
     "declarationDir": "dist",
     "outDir": "dist",
+    "rootDir": "src",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "strict": true,
-    "baseUrl": "src",
+    "strict": true
   },
   "include": ["src"],
   "exclude": ["node_modules", "dist"]
