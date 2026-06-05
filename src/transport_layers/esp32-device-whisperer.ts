@@ -18,6 +18,7 @@ import { AddConnectionProps, DeviceConnectionState, DeviceWhispererProps, MultiD
 /* Raw Serial Connection types - the minimum required for most applications */
 export type ESP32ConnectionState = DeviceConnectionState & {
   port?: SerialPort;
+  flashPort?: SerialPort;
   baudrate?: number;
   transport?: Transport;
   esp?: ESPLoader;
@@ -188,6 +189,7 @@ export function ESP32MultiDeviceWhisperer<
     uuid: string,
     baudrate?: number,
     restart_on_connect = true,
+    { commsOnly = false }: { commsOnly?: boolean } = {},
   ) => {
     const conn = base.getConnection(uuid);
     if (!conn) return;
@@ -195,9 +197,14 @@ export function ESP32MultiDeviceWhisperer<
     let port = conn?.port;
 
     if (!port) {
-      port = await navigator.serial.requestPort({
-        filters: [{ usbVendorId: 0x303a }]
-      });
+      // Reuse an already-granted JTAG port if there is one, so comms can
+      // reopen after a flash without prompting the user again.
+      const granted = await navigator.serial.getPorts();
+      port =
+        granted.find((p) => p.getInfo().usbVendorId === 0x303a) ??
+        (await navigator.serial.requestPort({
+          filters: [{ usbVendorId: 0x303a }],
+        }));
       base.updateConnection(uuid, (c) => ({ ...c, port }));
     };
 
@@ -208,23 +215,29 @@ export function ESP32MultiDeviceWhisperer<
     const transport = new Transport(port, false, false);
 
     try {
-      const esploader = new ESPLoader({
-        transport,
-        baudrate: use_baudrate,
-        enableTracing: false
-      } as LoaderOptions);
+      if (commsOnly) {
+        // Open the port for framed comms only. No esptool handshake, so the
+        // board is never forced into download mode and keeps running its app.
+        await transport.connect(use_baudrate);
+      } else {
+        const esploader = new ESPLoader({
+          transport,
+          baudrate: use_baudrate,
+          enableTracing: false
+        } as LoaderOptions);
 
-      try {
-        await esploader.main();
-      } catch (e) { console.log("failed to esploader.main()", e); return; };
+        try {
+          await esploader.main();
+        } catch (e) { console.log("failed to esploader.main()", e); return; };
 
-      try {
-        const mac = await esploader.chip.readMac(esploader);
-        console.log("Mac from device:", mac)
-        base.updateConnection(uuid, (c) => ({ ...c, deviceMac: mac }));
-      } catch (e) { console.log("Failed to read Mac address...") }
+        try {
+          const mac = await esploader.chip.readMac(esploader);
+          console.log("Mac from device:", mac)
+          base.updateConnection(uuid, (c) => ({ ...c, deviceMac: mac }));
+        } catch (e) { console.log("Failed to read Mac address...") }
 
-      if (restart_on_connect) { await restartDevice(uuid, transport) };
+        if (restart_on_connect) { await restartDevice(uuid, transport) };
+      }
 
       base.updateConnection(uuid, (c) => ({
         ...c,
@@ -240,6 +253,14 @@ export function ESP32MultiDeviceWhisperer<
       });
 
       await conn.onConnect?.();
+
+      if (commsOnly) {
+        // Run the read loop in the background so callers (e.g. a liveness
+        // probe) regain control once the port is open, instead of awaiting
+        // readLoop which only resolves when the connection closes.
+        void readLoop(uuid, transport);
+        return;
+      }
 
       await readLoop(uuid, transport);
     } catch (err: any) {
@@ -273,11 +294,15 @@ export function ESP32MultiDeviceWhisperer<
       }
     }
 
-    // Always clear the transport and reset connection state
+    // Always clear the transport and reset connection state.
+    // flashPort follows the same release rule as port: if we hold onto a
+    // stale CH343 across reconnects, the next flash silently reuses it
+    // and never prompts the user for the new board's flash port.
     base.updateConnection(uuid, (c) => ({
       ...c,
       port: releasePortByDefault ? null : c.port,
       transport: releasePortByDefault ? null : c.transport,
+      flashPort: releasePortByDefault ? undefined : c.flashPort,
       isConnected: false,
       isConnecting: false,
       autoConnect: false,
@@ -324,6 +349,46 @@ export function ESP32MultiDeviceWhisperer<
     base.removeConnection(uuid);
   };
 
+  // Prompt for the board's flash port (a CH343-style UART bridge) and store it
+  // on the connection. Must be called from a user gesture, one prompt at a time.
+  const requestFlashPort = async (uuid: string) => {
+    const conn = base.getConnection(uuid);
+    if (!conn) return;
+    const flashPort = await navigator.serial.requestPort({
+      filters: [{ usbVendorId: 0x1a86 }]
+    });
+    base.updateConnection(uuid, (c) => ({ ...c, flashPort }));
+    return flashPort;
+  };
+
+  // Reboot the board into its app over the flash bridge (CH343). Its RTS line
+  // is wired to EN, so this drives a real reset edge (GPIO0 high for a normal
+  // boot, EN low, then EN high) that the native USB-JTAG software reset can't.
+  const resetViaFlashPort = async (uuid: string) => {
+    const conn = base.getConnection(uuid);
+    const flashPort = conn?.flashPort;
+    if (!flashPort) return false;
+    const transport = new Transport(flashPort, false, false);
+    try {
+      await transport.connect(115200);
+      await transport.setDTR(false);
+      await transport.setRTS(true);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await transport.setRTS(false);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return true;
+    } catch (e) {
+      console.log("resetViaFlashPort failed", e);
+      return false;
+    } finally {
+      try {
+        await transport.disconnect();
+      } catch (e) {
+        console.log("resetViaFlashPort close error", e);
+      }
+    }
+  };
+
   const reconnectAll = async (...connectionProps: any) => {
     const connectionIds = base.connections.map(c => c.uuid);
 
@@ -341,7 +406,12 @@ export function ESP32MultiDeviceWhisperer<
   // This function now handles an entire device flashing session
   const handleFlashFirmware = async (uuid: string, assetsToFlash: { blob: Blob, address: number }[]) => {
     const conn = base.getConnection(uuid);
-    if (!conn || !conn.port || assetsToFlash.length === 0) return;
+    // Flash over the dedicated flash port (e.g. a CH343 UART bridge) when one
+    // has been selected. That bridge has the auto-reset circuit wired to
+    // EN/GPIO0, so esptool can hard-reset the board into its app afterwards.
+    // Fall back to the comms port if no flash port was chosen.
+    const flashPort = conn?.flashPort ?? conn?.port;
+    if (!conn || !flashPort || assetsToFlash.length === 0) return;
 
     await disconnect(uuid);
 
@@ -349,7 +419,7 @@ export function ESP32MultiDeviceWhisperer<
 
     try {
       // --- Connect ONCE ---
-      const transport = new Transport(conn.port, true);
+      const transport = new Transport(flashPort, true);
       const esploader = new ESPLoader({
         transport,
         baudrate: 921600,
@@ -392,15 +462,26 @@ export function ESP32MultiDeviceWhisperer<
         await esploader.writeFlash(flashOptions);
       } catch (e) { console.log("failed to esploader.writeFlash", e) };
 
+      // --- Reset into the app ---
+      // esptool-js' built-in hard reset only releases EN and never pulls it
+      // low, so on a UART bridge it produces no reset edge and the board stays
+      // in the download stub. Drive a real pulse over this port: GPIO0 high
+      // (normal boot), EN low, then EN high.
+      try {
+        await transport.setDTR(false);
+        await transport.setRTS(true);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await transport.setRTS(false);
+      } catch (e) { console.log("hard reset pulse failed", e); }
+
       // --- Disconnect ---
-      await esploader.after();
       try {
         await transport.disconnect();
       } catch (e) {
         console.log("failed to transport.disconnect", e);
-        await conn.port?.readable?.cancel();
-        await conn.port?.writable?.close();
-        await conn.port?.close();
+        await flashPort?.readable?.cancel();
+        await flashPort?.writable?.close();
+        await flashPort?.close();
       }
 
       base.updateConnection(uuid, (c) => ({ ...c, isFlashing: false, flashProgress: 100 }));
@@ -422,6 +503,8 @@ export function ESP32MultiDeviceWhisperer<
     ...base,
     addConnection,
     removeConnection,
+    requestFlashPort,
+    resetViaFlashPort,
     connect,
     disconnect,
     reconnectAll,
