@@ -77,6 +77,7 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
   const [connections, setConnections] = useState<T[]>([]);
   const connectionsRef = useRef<Map<string, T>>(new Map());
   const [isReady, setIsReady] = useState<boolean>(false);
+  const [focussedConnection, setFocussedConnection] = useState<string>("");
 
 
   // ---------- GET ----------
@@ -133,6 +134,20 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
     setConnections(Array.from(connectionsRef.current.values()));
   }, []);
 
+  // ---------- FOCUS ----------
+  useEffect(() => {
+    if (!connections.length) return;
+    const focussedIsMissing =
+      !!focussedConnection &&
+      !connections.some((c) => c.uuid === focussedConnection);
+    if (!focussedConnection || focussedIsMissing) {
+      const fallbackUuid = connections[connections.length - 1]?.uuid;
+      if (fallbackUuid && fallbackUuid !== focussedConnection) {
+        setFocussedConnection(fallbackUuid);
+      }
+    }
+  }, [connections, focussedConnection, setFocussedConnection]);
+
   return {
     connections,
     addConnection,
@@ -146,6 +161,8 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
     appendLog,
     isReady,
     setIsReady,
+    focussedConnection,
+    setFocussedConnection,
     createInitialConnectionState
   };
 }
