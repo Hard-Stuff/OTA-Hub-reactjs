@@ -17,6 +17,7 @@ import mqtt from "mqtt";
 export type MQTTConnectionState = DeviceConnectionState & {
   pingFunction?: (props?: any) => void,
   touchHeartbeat?: () => void,
+  publish?: (topic: string, data: string | Uint8Array) => void,
 };
 
 export function MQTTMultiDeviceWhisperer<
@@ -259,6 +260,24 @@ export function MQTTMultiDeviceWhisperer<
     clientRef.current?.publish(pubTopicFromUuid?.(uuid) ?? uuid, payload as any); // TS is wrong here!
   };
 
+  const defaultPublish = (
+    uuid: string,
+    topic: string,
+    data: string | Uint8Array
+  ) => {
+    const payload =
+      typeof data === 'string'
+        ? new TextEncoder().encode(data)
+        : data;
+
+    base.appendLog(uuid, {
+      level: 5,
+      message: payload,
+    });
+
+    clientRef.current?.publish(topic, payload as any);
+  };
+
   const addConnection = async (
     { uuid, propCreator }: AddConnectionProps<AppOrMessageLayer>
   ) => {
@@ -283,6 +302,7 @@ export function MQTTMultiDeviceWhisperer<
           send: (d) => defaultSend(id, d),
           onReceive: (d) => defaultOnReceive(id, d),
           touchHeartbeat: () => touchHeartbeat(id),
+          publish: (topic, d) => defaultPublish(id, topic, d),
           // Initial connection state
           ...base.createInitialConnectionState(id),
           // From props
