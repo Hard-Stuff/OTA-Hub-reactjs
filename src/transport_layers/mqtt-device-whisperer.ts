@@ -42,18 +42,21 @@ export function MQTTMultiDeviceWhisperer<
   AppOrMessageLayer extends MQTTConnectionState,
 >({
   serverUrl,
+  serverUrlFnc,
   uuidFromMessage,
   subTopicFromUuid = undefined,
   pubTopicFromUuid = undefined,
-  serverPort = 8883,
+  serverPort = 443,
   clientId = undefined,
   username = undefined,
   password = undefined,
   serverAutoConnect = true,
   serverConnectOn = false,
+  enableWatchdog = true,
   ...props
 }: {
-  serverUrl: string;
+  serverUrl?: string;
+  serverUrlFnc?: () => Promise<string> | string;
   uuidFromMessage: (topic: string, payload: Buffer<ArrayBufferLike>) => string;
   subTopicFromUuid?: (uuid: string) => string;
   pubTopicFromUuid?: (uuid: string) => string;
@@ -63,11 +66,16 @@ export function MQTTMultiDeviceWhisperer<
   password?: string;
   serverAutoConnect?: boolean;
   serverConnectOn?: boolean;
+  enableWatchdog?: boolean;
 } & DeviceWhispererProps<AppOrMessageLayer>) {
   const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
 
   const clientRef = useRef<mqtt.MqttClient | null>(null);
   const isUnmountedRef = useRef(false);
+
+  // ✨ NEW: Manage our own reconnect timer
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const watchdogTimers = useRef<
     Record<
       string,
@@ -75,6 +83,7 @@ export function MQTTMultiDeviceWhisperer<
       | undefined
     >
   >({});
+
   const addingConnections = useRef<Set<string>>(new Set());
   const topicCallbacksRef = useRef<Map<string, Set<MQTTTopicCallback>>>(
     new Map(),
@@ -101,11 +110,9 @@ export function MQTTMultiDeviceWhisperer<
     if (typeof payload === "string") {
       return new TextEncoder().encode(payload);
     }
-
     if (payload instanceof ArrayBuffer) {
       return new Uint8Array(payload);
     }
-
     return payload;
   };
 
@@ -132,7 +139,6 @@ export function MQTTMultiDeviceWhisperer<
           reject(err);
           return;
         }
-
         resolve();
       });
     });
@@ -179,7 +185,15 @@ export function MQTTMultiDeviceWhisperer<
     };
   };
 
-  const connectToMQTTServer = () => {
+  const connectToMQTTServer = async () => {
+    if (!serverUrl && !serverUrlFnc) {
+      console.error(
+        "MQTT MultiDeviceWhisperer requires either serverUrl or serverUrlFnc",
+      );
+      return;
+    }
+
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     isUnmountedRef.current = false;
 
     if (clientRef.current) {
@@ -187,44 +201,68 @@ export function MQTTMultiDeviceWhisperer<
         base.setIsReady(true);
         return;
       }
+      clientRef.current.removeAllListeners();
       clientRef.current.end(true);
     }
 
     try {
-      const new_client = mqtt.connect(serverUrl, {
+      const finalUrl = serverUrlFnc ? await serverUrlFnc() : serverUrl;
+
+      if (!finalUrl) throw new Error("Generated MQTT URL was undefined.");
+
+      const options: mqtt.IClientOptions = {
         port: serverPort,
         clientId: clientId,
         username,
         password,
         clean: true,
         keepalive: 30,
-        reconnectPeriod: 3000,
-      } as mqtt.IClientOptions);
+        reconnectPeriod: 0, // We now handle this ourselves
+      };
+
+      const new_client = mqtt.connect(finalUrl, options);
 
       new_client.on("connect", () => {
         console.log("MQTT Whisperer Connected");
         base.setIsReady(true);
 
-        // Re-subscribe custom topic callbacks after reconnect.
+        // Re-subscribe topic callbacks
         topicCallbacksRef.current.forEach((_callbacks, topic) => {
           new_client.subscribe(topic, { qos: 1 }, (err) => {
             if (err) console.error("Topic callback subscribe failed:", err);
           });
         });
+
+        // Since we create a brand new client on reconnect, we MUST re-subscribe
+        // to all actively managed device connections.
+        base.connections.forEach((conn) => {
+          const topic = subTopicFromUuid?.(conn.uuid) ?? conn.uuid;
+          new_client.subscribe(topic, { qos: 1 });
+        });
       });
 
-      new_client.on("reconnect", () => {
-        console.log("MQTT Whisperer Reconnecting...");
+      const handleReconnectCycle = () => {
         base.setIsReady(false);
-      });
+        if (isUnmountedRef.current) return;
 
-      new_client.on("close", () => {
-        console.log("MQTT Whisperer Closed");
-        base.setIsReady(false);
-      });
+        console.log("MQTT Whisperer closed. Scheduling async reconnect...");
+
+        // Ensure we only queue one reconnect attempt
+        if (reconnectTimeoutRef.current)
+          clearTimeout(reconnectTimeoutRef.current);
+
+        if (serverAutoConnect || serverConnectOn) {
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connectToMQTTServer();
+          }, 3000); // 3 second backoff
+        }
+      };
+
+      new_client.on("close", handleReconnectCycle);
+
       new_client.on("error", (err) => {
-        base.setIsReady(false);
         console.error("MQTT Whisperer Error:", err);
+        handleReconnectCycle();
       });
 
       new_client.on("message", (topic, payload) => {
@@ -259,30 +297,14 @@ export function MQTTMultiDeviceWhisperer<
     } catch (err) {
       console.error("MQTT init failed:", err);
       base.setIsReady(false);
-    }
 
-    return () => {
-      isUnmountedRef.current = true;
-      base.setIsReady(false);
-
-      Object.keys(watchdogTimers.current).forEach((uuid) => {
-        const timers = watchdogTimers.current[uuid];
-        if (timers) {
-          clearTimeout(timers.ping);
-          clearTimeout(timers.warn);
-          clearTimeout(timers.fail);
-        }
-      });
-      watchdogTimers.current = {};
-      topicCallbacksRef.current.clear();
-
-      if (clientRef.current) {
-        clientRef.current.removeAllListeners();
-        clientRef.current.end(true);
+      // If fetching the URL fails, try again in 3 seconds
+      if (!isUnmountedRef.current && (serverAutoConnect || serverConnectOn)) {
+        reconnectTimeoutRef.current = setTimeout(() => {
+          connectToMQTTServer();
+        }, 3000);
       }
-
-      clientRef.current = null;
-    };
+    }
   };
 
   const connect = async (uuid: string) => {
@@ -324,12 +346,12 @@ export function MQTTMultiDeviceWhisperer<
         }
       });
     } else {
-      console.warn("Skipped subscribe - client disconnected or unmounted");
+      console.warn("Skipped unsubscribe - client disconnected or unmounted");
     }
   };
 
   function touchHeartbeat(uuid: string) {
-    if (isUnmountedRef.current) return; // Stop if unmounted
+    if (isUnmountedRef.current || !enableWatchdog) return;
 
     clearTimeout(watchdogTimers.current[uuid]?.ping);
     clearTimeout(watchdogTimers.current[uuid]?.warn);
@@ -439,13 +461,11 @@ export function MQTTMultiDeviceWhisperer<
           touchHeartbeat: () => touchHeartbeat(id),
           // Initial connection state
           ...base.createInitialConnectionState(id),
-          // From props
           ...props,
         } as Partial<AppOrMessageLayer>;
       },
     });
 
-    // Delete this adding connections item
     addingConnections.current.delete(uuid);
 
     // Connect immediately
@@ -477,8 +497,32 @@ export function MQTTMultiDeviceWhisperer<
   useEffect(() => {
     if (!(serverAutoConnect || serverConnectOn)) return;
 
-    const cleanup = connectToMQTTServer();
-    return cleanup;
+    connectToMQTTServer();
+
+    return () => {
+      isUnmountedRef.current = true;
+      if (reconnectTimeoutRef.current)
+        clearTimeout(reconnectTimeoutRef.current);
+
+      Object.keys(watchdogTimers.current).forEach((uuid) => {
+        const timers = watchdogTimers.current[uuid];
+        if (timers) {
+          clearTimeout(timers.ping);
+          clearTimeout(timers.warn);
+          clearTimeout(timers.fail);
+        }
+      });
+      watchdogTimers.current = {};
+
+      topicCallbacksRef.current.clear();
+
+      if (clientRef.current) {
+        clientRef.current.removeAllListeners();
+        clientRef.current.end(true);
+      }
+
+      clientRef.current = null;
+    };
   }, [serverUrl, serverConnectOn]);
 
   return {
