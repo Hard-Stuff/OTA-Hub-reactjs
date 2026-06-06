@@ -7,7 +7,7 @@ export interface Asset {
   name: string;
   size: number;
   url: string;
-};
+}
 
 export interface Build {
   id: number;
@@ -17,4 +17,4 @@ export interface Build {
   published_at: Date;
   assets_url: string;
   assets: Asset[];
-};
+}

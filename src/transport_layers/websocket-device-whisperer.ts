@@ -1,5 +1,9 @@
 import { useEffect } from "react";
-import { DeviceConnectionState, MultiDeviceWhisperer, AddConnectionProps } from "../base/device-whisperer.js";
+import {
+  DeviceConnectionState,
+  MultiDeviceWhisperer,
+  AddConnectionProps,
+} from "../base/device-whisperer.js";
 
 /*
 ┌────────────────────────────────┐
@@ -23,26 +27,23 @@ export type DeviceObjectResponse = {
   uiState: string;
   deviceConnectedTime: Date | null;
   deviceLastCommTime: Date | null;
-}
+};
 
 export function WebsocketMultiDeviceWhisperer<
-  AppOrMessageLayer extends WebsocketConnectionState
->(
-  {
-    server_url,
-    server_port,
-    ...props
-  }: {
-    server_url: string,
-    server_port: number,
-  }
-) {
-
+  AppOrMessageLayer extends WebsocketConnectionState,
+>({
+  server_url,
+  server_port,
+  ...props
+}: {
+  server_url: string;
+  server_port: number;
+}) {
   const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
 
   const defaultOnReceive = (
     uuid: string,
-    data: string | ArrayBuffer | Uint8Array
+    data: string | ArrayBuffer | Uint8Array,
   ) => {
     const conn = base.getConnection(uuid);
     if (!conn) return;
@@ -64,7 +65,7 @@ export function WebsocketMultiDeviceWhisperer<
 
     base.updateConnection(uuid, (c) => ({
       ...c,
-      readBufferLeftover: lines.pop() || ""
+      readBufferLeftover: lines.pop() || "",
     }));
 
     for (const line of lines) {
@@ -78,24 +79,19 @@ export function WebsocketMultiDeviceWhisperer<
     }
   };
 
-  const defaultSend = async (
-    uuid: string,
-    data: string | Uint8Array
-  ) => {
+  const defaultSend = async (uuid: string, data: string | Uint8Array) => {
     const conn = base.getConnection(uuid);
     if (!conn || !conn.ws) return;
 
     const asString =
-      typeof data === "string"
-        ? data
-        : btoa(String.fromCharCode(...data));
+      typeof data === "string" ? data : btoa(String.fromCharCode(...data));
 
     base.appendLog(uuid, {
       level: 3,
       message: asString,
     });
 
-    conn.ws.send(data);
+    conn.ws.send(data as string);
   };
 
   const connect = async (uuid: string, attempt = 0) => {
@@ -110,11 +106,17 @@ export function WebsocketMultiDeviceWhisperer<
       conn.ws.close();
     }
 
-    base.updateConnection(uuid, (c) => ({ ...c, isConnecting: true, autoConnect: true }));
+    base.updateConnection(uuid, (c) => ({
+      ...c,
+      isConnecting: true,
+      autoConnect: true,
+    }));
 
     try {
       const pre = server_port !== 443 ? "ws" : "wss";
-      const ws = new WebSocket(`${pre}://${server_url}:${server_port}/ui/${uuid}`);
+      const ws = new WebSocket(
+        `${pre}://${server_url}:${server_port}/ui/${uuid}`,
+      );
       ws.binaryType = "arraybuffer";
 
       ws.onopen = () => {
@@ -123,12 +125,12 @@ export function WebsocketMultiDeviceWhisperer<
           ws,
           isConnected: true,
           isConnecting: false,
-          lastAttempt: attempt
+          lastAttempt: attempt,
         }));
 
         base.appendLog(uuid, {
           level: 2,
-          message: "[✓] WebSocket connected"
+          message: "[✓] WebSocket connected",
         });
 
         conn?.onConnect?.();
@@ -137,7 +139,8 @@ export function WebsocketMultiDeviceWhisperer<
       ws.onmessage = (event) => {
         let data: string | Uint8Array;
         if (typeof event.data === "string") data = event.data;
-        else if (event.data instanceof ArrayBuffer) data = new Uint8Array(event.data);
+        else if (event.data instanceof ArrayBuffer)
+          data = new Uint8Array(event.data);
         else data = event.data as any;
         conn.onReceive?.(data);
       };
@@ -145,7 +148,7 @@ export function WebsocketMultiDeviceWhisperer<
       ws.onerror = (err) => {
         base.appendLog(uuid, {
           level: 0,
-          message: `[x] WS error: ${err}`
+          message: `[x] WS error: ${err}`,
         });
       };
 
@@ -154,7 +157,7 @@ export function WebsocketMultiDeviceWhisperer<
           ...c,
           isConnected: false,
           isConnecting: false,
-          ws: undefined
+          ws: undefined,
         }));
         base.appendLog(uuid, { level: 0, message: "[!] WS disconnected" });
 
@@ -166,7 +169,10 @@ export function WebsocketMultiDeviceWhisperer<
 
         // Auto reconnect if enabled
         if (updated_conn.autoConnect && attempt < MAX_RETRIES) {
-          base.appendLog(uuid, { level: 2, message: `[~] Reconnecting in ${RETRY_DELAY_MS}ms... (attempt ${attempt + 1})` });
+          base.appendLog(uuid, {
+            level: 2,
+            message: `[~] Reconnecting in ${RETRY_DELAY_MS}ms... (attempt ${attempt + 1})`,
+          });
           setTimeout(() => connect(uuid, attempt + 1), RETRY_DELAY_MS);
         }
       };
@@ -177,8 +183,11 @@ export function WebsocketMultiDeviceWhisperer<
         isConnecting: false,
         logs: [
           ...c.logs,
-          { level: 0, message: `[x] WS connection error: ${err?.message || "Unknown error"}` }
-        ]
+          {
+            level: 0,
+            message: `[x] WS connection error: ${err?.message || "Unknown error"}`,
+          },
+        ],
       }));
       await disconnect(uuid);
     }
@@ -193,7 +202,7 @@ export function WebsocketMultiDeviceWhisperer<
       isConnecting: false,
       autoConnect: false,
       ws: undefined,
-      readBufferLeftover: ""
+      readBufferLeftover: "",
     }));
 
     conn.ws.close();
@@ -201,9 +210,10 @@ export function WebsocketMultiDeviceWhisperer<
     await conn?.onDisconnect?.();
   };
 
-  const addConnection = async (
-    { uuid, propCreator }: AddConnectionProps<AppOrMessageLayer>
-  ) => {
+  const addConnection = async ({
+    uuid,
+    propCreator,
+  }: AddConnectionProps<AppOrMessageLayer>) => {
     return await base.addConnection({
       uuid,
       propCreator: (id) => {
@@ -211,9 +221,9 @@ export function WebsocketMultiDeviceWhisperer<
         return {
           send: props?.send || ((d) => defaultSend(id, d)),
           onReceive: props?.onReceive || ((d) => defaultOnReceive(id, d)),
-          ...props
+          ...props,
         } as Partial<AppOrMessageLayer>;
-      }
+      },
     });
   };
 
@@ -240,7 +250,7 @@ export function WebsocketMultiDeviceWhisperer<
   };
 
   const reconnectAll = async (...connectionProps: any) => {
-    const connectionIds = base.connections.map(c => c.uuid);
+    const connectionIds = base.connections.map((c) => c.uuid);
 
     await Promise.all(
       connectionIds.map(async (id) => {
@@ -249,13 +259,13 @@ export function WebsocketMultiDeviceWhisperer<
         await disconnect(c.uuid);
         await new Promise((res) => setTimeout(res, 250));
         return connect(c.uuid, ...connectionProps);
-      })
+      }),
     );
   };
 
   useEffect(() => {
-    base.setIsReady(true) // Ready on page load by default
-  }, [])
+    base.setIsReady(true); // Ready on page load by default
+  }, []);
 
   return {
     ...base,
@@ -264,6 +274,6 @@ export function WebsocketMultiDeviceWhisperer<
     connect,
     disconnect,
     checkForNewDevices,
-    reconnectAll
+    reconnectAll,
   };
 }

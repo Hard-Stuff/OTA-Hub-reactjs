@@ -14,7 +14,12 @@ import { useEffect, useRef, useState } from "react";
 */
 
 /* Logging Types */
-export type LogMessage = string | number | boolean | Record<string, any> | any[];
+export type LogMessage =
+  | string
+  | number
+  | boolean
+  | Record<string, any>
+  | any[];
 export type LogLine = {
   level: number;
   message: LogMessage;
@@ -22,7 +27,10 @@ export type LogLine = {
 };
 
 type PropCreatorProps<T> = (uuid: string) => Partial<T> | undefined;
-export interface AddConnectionProps<T> { uuid?: string, propCreator?: PropCreatorProps<T> };
+export interface AddConnectionProps<T> {
+  uuid?: string;
+  propCreator?: PropCreatorProps<T>;
+}
 
 export type DeviceConnectionState = {
   // Device info
@@ -30,7 +38,7 @@ export type DeviceConnectionState = {
   deviceMac?: string;
   name: string;
   // Comms
-  
+
   /**
    * Default device send helper.
    * This is a utility function which may better be replaced with transport specific send functions (e.g. MQTT has publish, Serial has write etc.)
@@ -46,13 +54,12 @@ export type DeviceConnectionState = {
   logs: LogLine[];
   readBufferLeftover: string;
   readBufferLeftoverAsBytes: Uint8Array;
-}
+};
 
 // Initial, generic state for the generic device
-export function createDefaultInitialDeviceState<T extends DeviceConnectionState>(
-  uuid: string,
-  props?: any
-): T {
+export function createDefaultInitialDeviceState<
+  T extends DeviceConnectionState,
+>(uuid: string, props?: any): T {
   return {
     uuid,
     autoConnect: true,
@@ -61,29 +68,28 @@ export function createDefaultInitialDeviceState<T extends DeviceConnectionState>
     logs: [],
     readBufferLeftover: "",
     readBufferLeftoverAsBytes: new Uint8Array([]),
-    ...props
+    ...props,
   };
 }
 
 export type DeviceWhispererProps<T extends DeviceConnectionState> = {
-  createInitialConnectionState?: (
-    uuid: string,
-  ) => Partial<T>;
+  createInitialConnectionState?: (uuid: string) => Partial<T>;
 };
 
 /* One Device Whisperer is used for all like-devices, such as all Serial with Protobuf.
    Any e.g. Serial without Protobuf, or LoRaWAN etc. devices would be handled via a separate device whisperer
 */
-export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
-  {
-    createInitialConnectionState = createDefaultInitialDeviceState as (uuid: string) => Partial<T>,
-  }: DeviceWhispererProps<T> = {}
-) {
+export function MultiDeviceWhisperer<T extends DeviceConnectionState>({
+  createInitialConnectionState = createDefaultInitialDeviceState as (
+    uuid: string,
+  ) => Partial<T>,
+}: DeviceWhispererProps<T> = {}) {
   const [connections, setConnections] = useState<T[]>([]);
   const connectionsRef = useRef<Map<string, T>>(new Map());
   const [isReady, setIsReady] = useState<boolean>(false);
-  const [focussedConnection, setFocussedConnection] = useState<string | undefined>();
-
+  const [focussedConnection, setFocussedConnection] = useState<
+    string | undefined
+  >();
 
   // ---------- GET ----------
   const getConnection = (uuid: string) => connectionsRef.current.get(uuid);
@@ -111,14 +117,17 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
   };
 
   // ---------- ADD ----------
-  const addConnection = async ({ uuid, propCreator }: AddConnectionProps<T>) => {
+  const addConnection = async ({
+    uuid,
+    propCreator,
+  }: AddConnectionProps<T>) => {
     uuid = uuid ?? `unnamed_device_${connectionsRef.current.size}`;
     const props = propCreator?.(uuid);
 
     const newConnection: T = {
       ...createDefaultInitialDeviceState(uuid),
       ...createInitialConnectionState(uuid),
-      ...props
+      ...props,
     };
 
     connectionsRef.current.set(uuid, newConnection);
@@ -145,15 +154,15 @@ export function MultiDeviceWhisperer<T extends DeviceConnectionState>(
     connections,
     addConnection,
     removeConnection,
-    connect: (_uuid: string) => { },
-    disconnect: (_uuid: string) => { },
+    connect: (_uuid: string) => {},
+    disconnect: (_uuid: string) => {},
     updateConnection,
-    reconnectAll: () => { },
+    reconnectAll: () => {},
     updateConnectionName,
     getConnection,
     appendLog,
     isReady,
     setIsReady,
-    createInitialConnectionState
+    createInitialConnectionState,
   };
 }

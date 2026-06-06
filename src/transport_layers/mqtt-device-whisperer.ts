@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
-import { DeviceConnectionState, MultiDeviceWhisperer, AddConnectionProps, DeviceWhispererProps } from "../base/device-whisperer.js";
+import {
+  DeviceConnectionState,
+  MultiDeviceWhisperer,
+  AddConnectionProps,
+  DeviceWhispererProps,
+} from "../base/device-whisperer.js";
 import mqtt from "mqtt";
 
 /*
@@ -21,61 +26,73 @@ export type MQTTConnectionState = DeviceConnectionState & {
   /**
    * Publishes a payload to any explicit MQTT topic.
    */
-  publish?: (topic: string, payload: MQTTPayload) => void | Promise<void>,
+  publish?: (topic: string, payload: MQTTPayload) => void | Promise<void>;
   /**
    * Subscribes a callback for a specific topic. Returns an unsubscribe function.
    */
-  subscribeCallbackToTopic?: (topic: string, callback: MQTTTopicCallback) => () => void,
-  pingFunction?: (props?: any) => void,
-  touchHeartbeat?: () => void,
+  subscribeCallbackToTopic?: (
+    topic: string,
+    callback: MQTTTopicCallback,
+  ) => () => void;
+  pingFunction?: (props?: any) => void;
+  touchHeartbeat?: () => void;
 };
 
 export function MQTTMultiDeviceWhisperer<
-  AppOrMessageLayer extends MQTTConnectionState
->(
-  {
-    serverUrl,
-    uuidFromMessage,
-    subTopicFromUuid = undefined,
-    pubTopicFromUuid = undefined,
-    serverPort = 8883,
-    clientId = undefined,
-    username = undefined,
-    password = undefined,
-    serverAutoConnect = true,
-    serverConnectOn = false,
-    ...props
-  }: {
-    serverUrl: string,
-    uuidFromMessage: (topic: string, payload: Buffer<ArrayBufferLike>) => string,
-    subTopicFromUuid?: (uuid: string) => string,
-    pubTopicFromUuid?: (uuid: string) => string,
-    serverPort?: number,
-    clientId?: string,
-    username?: string,
-    password?: string,
-    serverAutoConnect?: boolean,
-    serverConnectOn?: boolean,
-  } & DeviceWhispererProps<AppOrMessageLayer>
-) {
-
+  AppOrMessageLayer extends MQTTConnectionState,
+>({
+  serverUrl,
+  uuidFromMessage,
+  subTopicFromUuid = undefined,
+  pubTopicFromUuid = undefined,
+  serverPort = 8883,
+  clientId = undefined,
+  username = undefined,
+  password = undefined,
+  serverAutoConnect = true,
+  serverConnectOn = false,
+  ...props
+}: {
+  serverUrl: string;
+  uuidFromMessage: (topic: string, payload: Buffer<ArrayBufferLike>) => string;
+  subTopicFromUuid?: (uuid: string) => string;
+  pubTopicFromUuid?: (uuid: string) => string;
+  serverPort?: number;
+  clientId?: string;
+  username?: string;
+  password?: string;
+  serverAutoConnect?: boolean;
+  serverConnectOn?: boolean;
+} & DeviceWhispererProps<AppOrMessageLayer>) {
   const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
 
   const clientRef = useRef<mqtt.MqttClient | null>(null);
   const isUnmountedRef = useRef(false);
-  const watchdogTimers = useRef<Record<string, { ping?: NodeJS.Timeout, warn?: NodeJS.Timeout, fail?: NodeJS.Timeout } | undefined>>({});
+  const watchdogTimers = useRef<
+    Record<
+      string,
+      | { ping?: NodeJS.Timeout; warn?: NodeJS.Timeout; fail?: NodeJS.Timeout }
+      | undefined
+    >
+  >({});
   const addingConnections = useRef<Set<string>>(new Set());
-  const topicCallbacksRef = useRef<Map<string, Set<MQTTTopicCallback>>>(new Map());
+  const topicCallbacksRef = useRef<Map<string, Set<MQTTTopicCallback>>>(
+    new Map(),
+  );
 
   const hasCallbackForTopic = (topic: string) => {
     const callbacks = topicCallbacksRef.current.get(topic);
     return !!callbacks && callbacks.size > 0;
   };
 
-  const hasOtherConnectionUsingTopic = (topic: string, excludingUuid?: string) => {
+  const hasOtherConnectionUsingTopic = (
+    topic: string,
+    excludingUuid?: string,
+  ) => {
     return base.connections.some((connection) => {
       if (excludingUuid && connection.uuid === excludingUuid) return false;
-      const connectionTopic = subTopicFromUuid?.(connection.uuid) ?? connection.uuid;
+      const connectionTopic =
+        subTopicFromUuid?.(connection.uuid) ?? connection.uuid;
       return connectionTopic === topic;
     });
   };
@@ -92,7 +109,11 @@ export function MQTTMultiDeviceWhisperer<
     return payload;
   };
 
-  const publish = async (topic: string, payload: MQTTPayload, uuidForLogs?: string) => {
+  const publish = async (
+    topic: string,
+    payload: MQTTPayload,
+    uuidForLogs?: string,
+  ) => {
     const client = clientRef.current;
     if (!client || isUnmountedRef.current) return;
 
@@ -117,10 +138,14 @@ export function MQTTMultiDeviceWhisperer<
     });
   };
 
-  const subscribeCallbackToTopic = (topic: string, callback: MQTTTopicCallback) => {
-    if (!topic) return () => { };
+  const subscribeCallbackToTopic = (
+    topic: string,
+    callback: MQTTTopicCallback,
+  ) => {
+    if (!topic) return () => {};
 
-    const topicCallbacks = topicCallbacksRef.current.get(topic) ?? new Set<MQTTTopicCallback>();
+    const topicCallbacks =
+      topicCallbacksRef.current.get(topic) ?? new Set<MQTTTopicCallback>();
     const topicAlreadyRegistered = topicCallbacksRef.current.has(topic);
     topicCallbacks.add(callback);
     topicCallbacksRef.current.set(topic, topicCallbacks);
@@ -166,17 +191,15 @@ export function MQTTMultiDeviceWhisperer<
     }
 
     try {
-      const new_client = mqtt.connect(
-        serverUrl,
-        {
-          port: serverPort,
-          clientId: clientId,
-          username,
-          password,
-          clean: true,
-          keepalive: 30,
-          reconnectPeriod: 3000,
-        } as mqtt.IClientOptions);
+      const new_client = mqtt.connect(serverUrl, {
+        port: serverPort,
+        clientId: clientId,
+        username,
+        password,
+        clean: true,
+        keepalive: 30,
+        reconnectPeriod: 3000,
+      } as mqtt.IClientOptions);
 
       new_client.on("connect", () => {
         console.log("MQTT Whisperer Connected");
@@ -201,14 +224,15 @@ export function MQTTMultiDeviceWhisperer<
       });
       new_client.on("error", (err) => {
         base.setIsReady(false);
-        console.error("MQTT Whisperer Error:", err)
+        console.error("MQTT Whisperer Error:", err);
       });
 
       new_client.on("message", (topic, payload) => {
         if (isUnmountedRef.current) return;
 
-        const uuid = uuidFromMessage(topic, payload)
-        const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+        const uuid = uuidFromMessage(topic, payload);
+        const bytes =
+          payload instanceof Uint8Array ? payload : new Uint8Array(payload);
 
         const topicCallbacks = topicCallbacksRef.current.get(topic);
         topicCallbacks?.forEach((cb) => {
@@ -259,19 +283,19 @@ export function MQTTMultiDeviceWhisperer<
 
       clientRef.current = null;
     };
-  }
+  };
 
   const connect = async (uuid: string) => {
     const conn = base.getConnection(uuid);
     if (!clientRef.current || isUnmountedRef.current || !conn) return;
 
-    const topic = subTopicFromUuid?.(uuid) ?? uuid
+    const topic = subTopicFromUuid?.(uuid) ?? uuid;
     if (clientRef.current.connected && !clientRef.current.disconnecting) {
       clientRef.current.subscribe(topic, { qos: 1 }, async (err) => {
         if (err) console.error("Subscribe failed:", err);
         else {
           console.log("MQTT Subscribed:", topic);
-          conn.onConnect?.()
+          conn.onConnect?.();
         }
       });
     } else {
@@ -282,10 +306,13 @@ export function MQTTMultiDeviceWhisperer<
   const disconnect = async (uuid: string) => {
     if (!clientRef.current || isUnmountedRef.current) return;
 
-    const topic = subTopicFromUuid?.(uuid) ?? uuid
+    const topic = subTopicFromUuid?.(uuid) ?? uuid;
 
     // Keep topic subscribed if callbacks or other device-connections still depend on it.
-    if (hasCallbackForTopic(topic) || hasOtherConnectionUsingTopic(topic, uuid)) {
+    if (
+      hasCallbackForTopic(topic) ||
+      hasOtherConnectionUsingTopic(topic, uuid)
+    ) {
       return;
     }
 
@@ -313,7 +340,7 @@ export function MQTTMultiDeviceWhisperer<
     base.updateConnection(uuid, (c) => ({
       ...c,
       isConnected: true,
-      isConnecting: false
+      isConnecting: false,
     }));
 
     const ping = setTimeout(() => {
@@ -323,12 +350,20 @@ export function MQTTMultiDeviceWhisperer<
 
     const warn = setTimeout(() => {
       if (isUnmountedRef.current) return;
-      base.updateConnection(uuid, (c) => ({ ...c, isConnected: false, isConnecting: true }));
+      base.updateConnection(uuid, (c) => ({
+        ...c,
+        isConnected: false,
+        isConnecting: true,
+      }));
     }, 30000);
 
     const fail = setTimeout(() => {
       if (isUnmountedRef.current) return;
-      base.updateConnection(uuid, (c) => ({ ...c, isConnected: false, isConnecting: false }));
+      base.updateConnection(uuid, (c) => ({
+        ...c,
+        isConnected: false,
+        isConnecting: false,
+      }));
     }, 60000);
 
     watchdogTimers.current[uuid] = { ping, warn, fail };
@@ -336,7 +371,7 @@ export function MQTTMultiDeviceWhisperer<
 
   const defaultOnReceive = (
     uuid: string,
-    data: string | ArrayBuffer | Uint8Array
+    data: string | ArrayBuffer | Uint8Array,
   ) => {
     const conn = base.getConnection(uuid);
     if (!conn) return;
@@ -362,10 +397,7 @@ export function MQTTMultiDeviceWhisperer<
     });
   };
 
-  const defaultSend = async (
-    uuid: string,
-    data: string | Uint8Array
-  ) => {
+  const defaultSend = async (uuid: string, data: string | Uint8Array) => {
     const conn = base.getConnection(uuid);
     if (!conn) return;
 
@@ -373,18 +405,24 @@ export function MQTTMultiDeviceWhisperer<
     await publish(topic, data, uuid);
   };
 
-  const addConnection = async (
-    { uuid, propCreator }: AddConnectionProps<AppOrMessageLayer>
-  ) => {
-    if (!clientRef.current || isUnmountedRef.current) return '';
+  const addConnection = async ({
+    uuid,
+    propCreator,
+  }: AddConnectionProps<AppOrMessageLayer>) => {
+    if (!clientRef.current || isUnmountedRef.current) return "";
 
     if (!uuid) {
-      Error("In MQTT you MUST define a UUID otherwise we don't know what device we're connecting to!")
-      return ''
+      Error(
+        "In MQTT you MUST define a UUID otherwise we don't know what device we're connecting to!",
+      );
+      return "";
     }
 
-    if (base.connections.some(c => c.uuid === uuid) || addingConnections.current.has(uuid)) {
-      return '';
+    if (
+      base.connections.some((c) => c.uuid === uuid) ||
+      addingConnections.current.has(uuid)
+    ) {
+      return "";
     }
 
     await base.addConnection({
@@ -402,21 +440,20 @@ export function MQTTMultiDeviceWhisperer<
           // Initial connection state
           ...base.createInitialConnectionState(id),
           // From props
-          ...props
+          ...props,
         } as Partial<AppOrMessageLayer>;
-      }
+      },
     });
 
     // Delete this adding connections item
     addingConnections.current.delete(uuid);
 
     // Connect immediately
-    const conn = base.getConnection(uuid)
-    if (conn?.autoConnect)
-      await connect(uuid)
+    const conn = base.getConnection(uuid);
+    if (conn?.autoConnect) await connect(uuid);
 
-    return uuid
-  }
+    return uuid;
+  };
 
   const removeConnection = async (uuid: string) => {
     await disconnect(uuid);
@@ -424,7 +461,7 @@ export function MQTTMultiDeviceWhisperer<
   };
 
   const reconnectAll = async () => {
-    const connectionIds = base.connections.map(c => c.uuid);
+    const connectionIds = base.connections.map((c) => c.uuid);
 
     await Promise.all(
       connectionIds.map(async (id) => {
@@ -433,7 +470,7 @@ export function MQTTMultiDeviceWhisperer<
         await disconnect(c.uuid);
         await new Promise((res) => setTimeout(res, 250));
         return connect(c.uuid);
-      })
+      }),
     );
   };
 
@@ -451,6 +488,6 @@ export function MQTTMultiDeviceWhisperer<
     connect,
     disconnect,
     reconnectAll,
-    connectToMQTTServer
+    connectToMQTTServer,
   };
 }

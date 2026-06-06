@@ -11,4 +11,4 @@ export * from "./transport_layers/websocket-device-whisperer.js";
 export * from "./transport_layers/mqtt-device-whisperer.js";
 
 // Specific types
-export * from "./types/builds.js"
+export * from "./types/builds.js";

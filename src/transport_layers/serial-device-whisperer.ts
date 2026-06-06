@@ -1,4 +1,9 @@
-import { DeviceConnectionState, MultiDeviceWhisperer, AddConnectionProps, DeviceWhispererProps } from "../base/device-whisperer.js";
+import {
+  DeviceConnectionState,
+  MultiDeviceWhisperer,
+  AddConnectionProps,
+  DeviceWhispererProps,
+} from "../base/device-whisperer.js";
 import { useEffect, useRef, useState } from "react";
 
 /*
@@ -45,19 +50,24 @@ export class UsbTransport {
     let ctrlIface: USBInterface | undefined;
     let dataIface: USBInterface | undefined;
 
-    dataIface = interfaces.find(iface => {
+    dataIface = interfaces.find((iface) => {
       const endpoints = iface.alternate.endpoints;
-      return endpoints.some(e => e.direction === 'in' && e.type === 'bulk') &&
-        endpoints.some(e => e.direction === 'out' && e.type === 'bulk');
+      return (
+        endpoints.some((e) => e.direction === "in" && e.type === "bulk") &&
+        endpoints.some((e) => e.direction === "out" && e.type === "bulk")
+      );
     });
 
     if (dataIface) {
       this.dataInterface = dataIface.interfaceNumber;
 
-      ctrlIface = interfaces.find(i => i.interfaceNumber === this.dataInterface - 1)
-        || interfaces.find(i => i.alternate.interfaceClass === 2);
+      ctrlIface =
+        interfaces.find((i) => i.interfaceNumber === this.dataInterface - 1) ||
+        interfaces.find((i) => i.alternate.interfaceClass === 2);
 
-      this.controlInterface = ctrlIface ? ctrlIface.interfaceNumber : this.dataInterface;
+      this.controlInterface = ctrlIface
+        ? ctrlIface.interfaceNumber
+        : this.dataInterface;
     }
 
     if (!dataIface) {
@@ -70,31 +80,42 @@ export class UsbTransport {
         await this.device.claimInterface(this.controlInterface);
       }
     } catch (e) {
-      console.warn("Could not claim Control Interface (OS locked?). Proceeding to Data...", e);
+      console.warn(
+        "Could not claim Control Interface (OS locked?). Proceeding to Data...",
+        e,
+      );
       // We continue, but setSignals might fail later.
     }
 
     try {
       await this.device.claimInterface(this.dataInterface);
     } catch (e) {
-      throw new Error(`Failed to claim Data Interface. Android OS has locked the device driver. Try using a 'Vendor Specific' USB Class device or a native Serial App workaround.`);
+      throw new Error(
+        `Failed to claim Data Interface. Android OS has locked the device driver. Try using a 'Vendor Specific' USB Class device or a native Serial App workaround.`,
+      );
     }
 
     const endpoints = dataIface.alternate.endpoints;
-    this.endpointIn = endpoints.find(e => e.direction === 'in' && e.type === 'bulk')!.endpointNumber;
-    this.endpointOut = endpoints.find(e => e.direction === 'out' && e.type === 'bulk')!.endpointNumber;
+    this.endpointIn = endpoints.find(
+      (e) => e.direction === "in" && e.type === "bulk",
+    )!.endpointNumber;
+    this.endpointOut = endpoints.find(
+      (e) => e.direction === "out" && e.type === "bulk",
+    )!.endpointNumber;
 
     await this.setBaudRate(baudRate);
     await this.setSignals({ dtr: false, rts: false });
   }
 
-
   /**
-     * Writes bytes to the device
-     */
+   * Writes bytes to the device
+   */
   async write(data: Uint8Array): Promise<void> {
     if (!this.device.opened) return;
-    await this.device.transferOut(this.endpointOut, data as unknown as BufferSource);
+    await this.device.transferOut(
+      this.endpointOut,
+      data as unknown as BufferSource,
+    );
   }
 
   /**
@@ -105,7 +126,7 @@ export class UsbTransport {
     if (!this.device.opened) return null;
     try {
       const result = await this.device.transferIn(this.endpointIn, length);
-      if (result.status === 'ok' && result.data) {
+      if (result.status === "ok" && result.data) {
         return new Uint8Array(result.data.buffer);
       }
     } catch (e) {
@@ -114,21 +135,20 @@ export class UsbTransport {
     return null;
   }
 
-
   /**
    * Sets DTR/RTS lines. Crucial for resetting the ESP32.
    * Uses standard CDC-ACM request 0x22.
    */
   async setSignals({ dtr, rts }: { dtr: boolean; rts: boolean }) {
     if (!this.device.opened) return;
-    const value = (Number(dtr) | (Number(rts) << 1));
+    const value = Number(dtr) | (Number(rts) << 1);
 
     await this.device.controlTransferOut({
-      requestType: 'class',
-      recipient: 'interface',
+      requestType: "class",
+      recipient: "interface",
       request: UsbTransport.SET_CONTROL_LINE_STATE,
       value: value,
-      index: this.controlInterface
+      index: this.controlInterface,
     });
   }
 
@@ -144,21 +164,28 @@ export class UsbTransport {
     view.setUint8(5, 0);
     view.setUint8(6, 8);
 
-    await this.device.controlTransferOut({
-      requestType: 'class',
-      recipient: 'interface',
-      request: UsbTransport.SET_LINE_CODING,
-      value: 0,
-      index: this.controlInterface
-    }, buffer);
+    await this.device.controlTransferOut(
+      {
+        requestType: "class",
+        recipient: "interface",
+        request: UsbTransport.SET_LINE_CODING,
+        value: 0,
+        index: this.controlInterface,
+      },
+      buffer,
+    );
   }
 
   async disconnect() {
     if (this.device.opened) {
       // Release both
-      try { await this.device.releaseInterface(this.dataInterface); } catch (e) { }
+      try {
+        await this.device.releaseInterface(this.dataInterface);
+      } catch (e) {}
       if (this.controlInterface !== this.dataInterface) {
-        try { await this.device.releaseInterface(this.controlInterface); } catch (e) { }
+        try {
+          await this.device.releaseInterface(this.controlInterface);
+        } catch (e) {}
       }
       await this.device.close();
     }
@@ -166,27 +193,30 @@ export class UsbTransport {
 }
 
 export type SerialConnectionState = DeviceConnectionState & {
-  device?: USBDevice;      // Replaces SerialPort
+  device?: USBDevice; // Replaces SerialPort
   transport?: UsbTransport; // Replaces esptool Transport
   baudrate?: number;
   slipReadWrite?: boolean;
 };
 
 export function SerialMultiDeviceWhisperer<
-  AppOrMessageLayer extends SerialConnectionState
+  AppOrMessageLayer extends SerialConnectionState,
 >({ ...props }: DeviceWhispererProps<AppOrMessageLayer> = {}) {
-
   const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
 
   const releasePortByDefaultRef = useRef(false);
-  const [releasePortByDefaultState, setReleasePortByDefaultState] = useState(false);
+  const [releasePortByDefaultState, setReleasePortByDefaultState] =
+    useState(false);
 
   useEffect(() => {
     releasePortByDefaultRef.current = releasePortByDefaultState;
-  }, [releasePortByDefaultState])
+  }, [releasePortByDefaultState]);
 
   // --- Message Processing (Identical logic, just copied over) ---
-  const defaultOnReceive = (uuid: string, data: string | ArrayBuffer | Uint8Array) => {
+  const defaultOnReceive = (
+    uuid: string,
+    data: string | ArrayBuffer | Uint8Array,
+  ) => {
     const conn = base.getConnection(uuid);
     if (!conn) return;
 
@@ -201,7 +231,10 @@ export function SerialMultiDeviceWhisperer<
     const combined = conn.readBufferLeftover + asText;
     const lines = combined.split("\n");
 
-    base.updateConnection(uuid, (c) => ({ ...c, readBufferLeftover: lines.pop() || "" }));
+    base.updateConnection(uuid, (c) => ({
+      ...c,
+      readBufferLeftover: lines.pop() || "",
+    }));
 
     for (const line of lines) {
       if (line.trim()) {
@@ -214,7 +247,8 @@ export function SerialMultiDeviceWhisperer<
     const conn = base.getConnection(uuid);
     if (!conn?.transport) return;
 
-    const bytes: Uint8Array = typeof data === "string" ? new TextEncoder().encode(data) : data;
+    const bytes: Uint8Array =
+      typeof data === "string" ? new TextEncoder().encode(data) : data;
 
     base.appendLog(uuid, {
       level: 3,
@@ -241,7 +275,7 @@ export function SerialMultiDeviceWhisperer<
 
         if (!bytes || bytes.length === 0) {
           // Small delay to prevent CPU spinning if device sends nothing
-          await new Promise(r => setTimeout(r, 10));
+          await new Promise((r) => setTimeout(r, 10));
           continue;
         }
 
@@ -251,7 +285,7 @@ export function SerialMultiDeviceWhisperer<
           const currentConn = base.getConnection(uuid); // Refresh ref
 
           if (inSlipFrame) {
-            if (b === 0xC0) {
+            if (b === 0xc0) {
               if (slipBuffer.length > 0) {
                 const payload = new Uint8Array(slipBuffer);
                 currentConn?.onReceive?.(payload);
@@ -260,11 +294,11 @@ export function SerialMultiDeviceWhisperer<
               inSlipFrame = false;
               escapeNext = false;
             } else if (escapeNext) {
-              if (b === 0xDC) slipBuffer.push(0xC0);
-              else if (b === 0xDD) slipBuffer.push(0xDB);
+              if (b === 0xdc) slipBuffer.push(0xc0);
+              else if (b === 0xdd) slipBuffer.push(0xdb);
               slipBuffer = []; // reset on error?
               escapeNext = false;
-            } else if (b === 0xDB) {
+            } else if (b === 0xdb) {
               escapeNext = true;
             } else {
               slipBuffer.push(b);
@@ -272,7 +306,7 @@ export function SerialMultiDeviceWhisperer<
             continue;
           }
 
-          if (b === 0xC0 && currentConn?.slipReadWrite) {
+          if (b === 0xc0 && currentConn?.slipReadWrite) {
             inSlipFrame = true;
             slipBuffer = [];
             continue;
@@ -298,7 +332,10 @@ export function SerialMultiDeviceWhisperer<
   };
 
   // --- Restart Logic (Uses our new setSignals) ---
-  const restartDevice = async (uuid: string, activeTransport?: UsbTransport) => {
+  const restartDevice = async (
+    uuid: string,
+    activeTransport?: UsbTransport,
+  ) => {
     const conn = base.getConnection(uuid);
     const transport = activeTransport ?? conn?.transport;
 
@@ -310,7 +347,7 @@ export function SerialMultiDeviceWhisperer<
       await new Promise((r) => setTimeout(r, 100));
       await transport.setSignals({ dtr: false, rts: false });
     }
-  }
+  };
 
   const connect = async (uuid: string, baudrate = 115200) => {
     const conn = base.getConnection(uuid);
@@ -319,7 +356,7 @@ export function SerialMultiDeviceWhisperer<
     // Close existing if open
     if (conn.transport) await disconnect(uuid);
 
-    base.updateConnection(uuid, c => ({ ...c, isConnecting: true }));
+    base.updateConnection(uuid, (c) => ({ ...c, isConnecting: true }));
 
     const transport = new UsbTransport(conn.device);
 
@@ -329,22 +366,25 @@ export function SerialMultiDeviceWhisperer<
       // Optional: Auto-restart on connect
       await restartDevice(uuid, transport);
 
-      base.updateConnection(uuid, c => ({
+      base.updateConnection(uuid, (c) => ({
         ...c,
         transport,
         baudrate,
         isConnected: true,
-        isConnecting: false
+        isConnecting: false,
       }));
 
       await conn.onConnect?.();
 
       // Start polling loop
       readLoop(uuid, transport);
-
     } catch (err: any) {
       console.error(err);
-      base.updateConnection(uuid, c => ({ ...c, isConnected: false, isConnecting: false }));
+      base.updateConnection(uuid, (c) => ({
+        ...c,
+        isConnected: false,
+        isConnecting: false,
+      }));
       await disconnect(uuid);
     }
   };
@@ -354,19 +394,22 @@ export function SerialMultiDeviceWhisperer<
     if (conn?.transport) {
       await conn.transport.disconnect();
     }
-    base.updateConnection(uuid, c => ({
+    base.updateConnection(uuid, (c) => ({
       ...c,
       transport: releasePortByDefaultRef.current ? null : c.transport,
       isConnected: false,
-      isConnecting: false
+      isConnecting: false,
     }));
     await conn?.onDisconnect?.();
   };
 
-  const addConnection = async ({ uuid, propCreator }: AddConnectionProps<AppOrMessageLayer>) => {
+  const addConnection = async ({
+    uuid,
+    propCreator,
+  }: AddConnectionProps<AppOrMessageLayer>) => {
     try {
       const device = await navigator.usb.requestDevice({
-        filters: []
+        filters: [],
       });
 
       const return_uuid = await base.addConnection({
@@ -381,15 +424,14 @@ export function SerialMultiDeviceWhisperer<
             // Initial connection state
             ...base.createInitialConnectionState(id),
             // From props
-            ...props
+            ...props,
           } as Partial<AppOrMessageLayer>;
-        }
+        },
       });
-      const conn = base.getConnection(return_uuid)
-      if (conn?.autoConnect)
-        await connect(return_uuid)
+      const conn = base.getConnection(return_uuid);
+      if (conn?.autoConnect) await connect(return_uuid);
 
-      return return_uuid
+      return return_uuid;
     } catch (e) {
       console.log("User cancelled or no device selected");
     }
@@ -399,9 +441,9 @@ export function SerialMultiDeviceWhisperer<
     await disconnect(uuid);
     base.removeConnection(uuid);
   };
-  
+
   const reconnectAll = async (...connectionProps: any) => {
-    const connectionIds = base.connections.map(c => c.uuid);
+    const connectionIds = base.connections.map((c) => c.uuid);
 
     await Promise.all(
       connectionIds.map(async (id) => {
@@ -410,11 +452,13 @@ export function SerialMultiDeviceWhisperer<
         await disconnect(c.uuid);
         await new Promise((res) => setTimeout(res, 250));
         return connect(c.uuid, ...connectionProps);
-      })
+      }),
     );
   };
 
-  useEffect(() => { base.setIsReady(true) }, []);
+  useEffect(() => {
+    base.setIsReady(true);
+  }, []);
 
   return {
     ...base,
@@ -424,6 +468,6 @@ export function SerialMultiDeviceWhisperer<
     disconnect,
     reconnectAll,
     releasePortByDefault: releasePortByDefaultState,
-    setReleasePortByDefault: setReleasePortByDefaultState
+    setReleasePortByDefault: setReleasePortByDefaultState,
   };
 }

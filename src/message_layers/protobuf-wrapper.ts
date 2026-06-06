@@ -1,4 +1,8 @@
-import { AddConnectionProps, DeviceConnectionState, MultiDeviceWhisperer } from "../base/device-whisperer.js";
+import {
+  AddConnectionProps,
+  DeviceConnectionState,
+  MultiDeviceWhisperer,
+} from "../base/device-whisperer.js";
 
 /*
 ┌────────────────────────────────┐
@@ -20,16 +24,19 @@ export type TopicHandlerContext<AppLayer extends DeviceConnectionState> = {
 export type TopicHandlerMap<
   AppLayer extends DeviceConnectionState,
   Topic extends string | number,
-  Message = any
+  Message = any,
 > = {
-    [K in Topic]?: (message: Message, context: TopicHandlerContext<AppLayer>) => void;
-  };
+  [K in Topic]?: (
+    message: Message,
+    context: TopicHandlerContext<AppLayer>,
+  ) => void;
+};
 
 export type ProtobufDeviceWhispererProps<
   AppLayer extends DeviceConnectionState,
   Topic extends string | number,
   MessageRX = any,
-  MessageTX = any
+  MessageTX = any,
 > = {
   transportLayer: ReturnType<typeof MultiDeviceWhisperer<AppLayer>>;
   encodeRX: (message: MessageTX) => Uint8Array;
@@ -37,14 +44,14 @@ export type ProtobufDeviceWhispererProps<
   messageTypeField: keyof MessageRX;
   rxTopicHandlerMap: TopicHandlerMap<AppLayer, Topic, MessageRX>;
   HEADER?: Uint8Array;
-  expectLength?: boolean
+  expectLength?: boolean;
 };
 
 export function ProtobufMultiDeviceWhisperer<
   AppLayer extends DeviceConnectionState,
   Topic extends string | number,
   MessageRX = any,
-  MessageTX = any
+  MessageTX = any,
 >({
   transportLayer,
   encodeRX,
@@ -53,7 +60,6 @@ export function ProtobufMultiDeviceWhisperer<
   rxTopicHandlerMap,
   HEADER = new Uint8Array([]),
 }: ProtobufDeviceWhispererProps<AppLayer, Topic, MessageRX, MessageTX>) {
-
   // --- Utils ---
   const concatUint8Arrays = (a: Uint8Array, b: Uint8Array): Uint8Array => {
     const result = new Uint8Array(a.length + b.length);
@@ -66,16 +72,15 @@ export function ProtobufMultiDeviceWhisperer<
     const length = payload.length;
     const header = new Uint8Array([
       (length >> 8) & 0xff, // Most significant byte first
-      length & 0xff         // Least significant byte second
+      length & 0xff, // Least significant byte second
     ]);
     return concatUint8Arrays(header, payload);
   };
 
   const tryDecodeLengthPrefixed = (
-    buffer: Uint8Array
+    buffer: Uint8Array,
   ): [MessageRX | null, Uint8Array] => {
     if (HEADER.length) {
-
       const findHeader = (buf: Uint8Array): number => {
         for (let i = 0; i < buf.length - 1; i++) {
           if (buf[i] === HEADER[0] && buf[i + 1] === HEADER[1]) return i;
@@ -89,12 +94,11 @@ export function ProtobufMultiDeviceWhisperer<
       buffer = buffer.slice(headerIndex);
     }
 
-    const st_msg = HEADER.length + 2
+    const st_msg = HEADER.length + 2;
     if (buffer.length < st_msg) return [null, buffer];
 
     const length = (buffer[HEADER.length] << 8) | buffer[HEADER.length + 1];
     if (buffer.length < st_msg + length) return [null, buffer];
-
 
     const messageBytes = buffer.slice(st_msg, st_msg + length);
     const leftover = buffer.slice(st_msg + length);
@@ -120,10 +124,12 @@ export function ProtobufMultiDeviceWhisperer<
   // --- Inbound buffering ---
   const buffers: Record<string, Uint8Array> = {};
 
-  const protoBufOnReceiveHandler = (uuid: string, data: string | Uint8Array) => {
-    const bytes = typeof data === "string"
-      ? new TextEncoder().encode(data)
-      : data;
+  const protoBufOnReceiveHandler = (
+    uuid: string,
+    data: string | Uint8Array,
+  ) => {
+    const bytes =
+      typeof data === "string" ? new TextEncoder().encode(data) : data;
 
     buffers[uuid] = concatUint8Arrays(buffers[uuid] || new Uint8Array(), bytes);
     let buffer = buffers[uuid];
@@ -142,13 +148,13 @@ export function ProtobufMultiDeviceWhisperer<
           } catch (err) {
             transportLayer.appendLog(uuid, {
               level: 0,
-              message: `[!] Error in handler for topic "${topic}": ${err}`
+              message: `[!] Error in handler for topic "${topic}": ${err}`,
             });
           }
         } else {
           transportLayer.appendLog(uuid, {
             level: 1,
-            message: `[!] Unknown Protobuf topic: "${topic}"`
+            message: `[!] Unknown Protobuf topic: "${topic}"`,
           });
         }
         buffer = buffers[uuid];
@@ -158,7 +164,7 @@ export function ProtobufMultiDeviceWhisperer<
       // If not protobuf, see if we can log a line of text
       const newlineIdx = buffer.indexOf(10); // '\n'
       const headerIdx = buffer.findIndex((_, i) =>
-        HEADER.every((h, idx) => buffer[i] + idx === h)
+        HEADER.every((h, idx) => buffer[i] + idx === h),
       );
       if (newlineIdx !== -1 && (headerIdx === -1 || newlineIdx < headerIdx)) {
         const line = buffer.slice(0, newlineIdx);
@@ -168,7 +174,7 @@ export function ProtobufMultiDeviceWhisperer<
         if (text) {
           transportLayer.appendLog(uuid, {
             level: 2,
-            message: text
+            message: text,
           });
         }
         continue;
@@ -180,16 +186,15 @@ export function ProtobufMultiDeviceWhisperer<
 
         const preview = Array.from(garbage)
           .slice(0, 16)
-          .map(b => b.toString(16).padStart(2, '0'))
-          .join(' ');
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join(" ");
 
         transportLayer.appendLog(uuid, {
           level: 1,
-          message: `[!] Skipped invalid bytes before Protobuf header: ${preview}... (${garbage.length} bytes)`
+          message: `[!] Skipped invalid bytes before Protobuf header: ${preview}... (${garbage.length} bytes)`,
         });
         continue;
       }
-
 
       break;
     }
@@ -197,9 +202,10 @@ export function ProtobufMultiDeviceWhisperer<
   };
 
   // --- Override addConnection to wrap onReceive ---
-  const addConnection = async (
-    { uuid, propCreator }: AddConnectionProps<AppLayer>
-  ): Promise<string> => {
+  const addConnection = async ({
+    uuid,
+    propCreator,
+  }: AddConnectionProps<AppLayer>): Promise<string> => {
     return await transportLayer.addConnection({
       uuid,
       propCreator: (id: string) => {
@@ -207,9 +213,9 @@ export function ProtobufMultiDeviceWhisperer<
         return {
           onReceive: (data: string | Uint8Array) =>
             protoBufOnReceiveHandler(id, data),
-          ...props
+          ...props,
         } as Partial<AppLayer>;
-      }
+      },
     });
   };
 
@@ -217,6 +223,6 @@ export function ProtobufMultiDeviceWhisperer<
     ...transportLayer,
     addConnection,
     sendProtobuf,
-    protoBufOnReceiveHandler
+    protoBufOnReceiveHandler,
   };
 }
