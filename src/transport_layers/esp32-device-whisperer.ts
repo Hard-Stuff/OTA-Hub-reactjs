@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ESPLoader, FlashOptions, LoaderOptions, Transport } from "esptool-js";
-import { AddConnectionProps, DeviceConnectionState, DeviceWhispererProps, MultiDeviceWhisperer } from "../base/device-whisperer.js";
+import {
+  AddConnectionProps,
+  DeviceConnectionState,
+  DeviceWhispererProps,
+  MultiDeviceWhisperer,
+} from "../base/device-whisperer.js";
 
 /*
 ┌────────────────────────────────┐
@@ -28,22 +33,25 @@ export type ESP32ConnectionState = DeviceConnectionState & {
 };
 
 export type FlashFirmwareProps = {
-  uuid: string
-  firmwareBlob?: Blob,
-  fileArray?: FlashOptions["fileArray"]
-}
+  uuid: string;
+  firmwareBlob?: Blob;
+  fileArray?: FlashOptions["fileArray"];
+};
 
 export function ESP32MultiDeviceWhisperer<
-  AppOrMessageLayer extends ESP32ConnectionState
+  AppOrMessageLayer extends ESP32ConnectionState,
 >(
-  { releasePortByDefault, ...props }: { releasePortByDefault: boolean } & DeviceWhispererProps<AppOrMessageLayer>
-    = { releasePortByDefault: true }) {
-
+  {
+    releasePortByDefault,
+    ...props
+  }: {
+    releasePortByDefault: boolean;
+  } & DeviceWhispererProps<AppOrMessageLayer> = { releasePortByDefault: true },
+) {
   const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
   const defaultOnReceive = (uuid: string, data: string | Uint8Array) => {
-    const text = typeof data === "string"
-      ? data
-      : new TextDecoder().decode(data);
+    const text =
+      typeof data === "string" ? data : new TextDecoder().decode(data);
 
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -65,7 +73,8 @@ export function ESP32MultiDeviceWhisperer<
     // Log for debugging
     base.appendLog(uuid, {
       level: 3,
-      message: typeof data === "string" ? data : btoa(String.fromCharCode(...bytes)),
+      message:
+        typeof data === "string" ? data : btoa(String.fromCharCode(...bytes)),
     });
 
     if (!conn.transport) return;
@@ -86,19 +95,23 @@ export function ESP32MultiDeviceWhisperer<
 
       while (true) {
         const conn = base.getConnection(uuid);
-        if (!conn) { console.log("Kack!"); return };
+        if (!conn) {
+          console.log("Kack!");
+          return;
+        }
 
         const { value, done } = await reader.next();
         if (done || !value) break;
 
-        const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+        const bytes =
+          value instanceof Uint8Array ? value : new Uint8Array(value);
 
         for (let i = 0; i < bytes.length; i++) {
           const b = bytes[i];
 
           if (inSlipFrame) {
             // SLIP decoding
-            if (b === 0xC0) {
+            if (b === 0xc0) {
               if (slipBuffer.length > 0) {
                 // complete SLIP frame received
                 const payload = new Uint8Array(slipBuffer);
@@ -117,15 +130,15 @@ export function ESP32MultiDeviceWhisperer<
               inSlipFrame = false;
               escapeNext = false;
             } else if (escapeNext) {
-              if (b === 0xDC) slipBuffer.push(0xC0);
-              else if (b === 0xDD) slipBuffer.push(0xDB);
+              if (b === 0xdc) slipBuffer.push(0xc0);
+              else if (b === 0xdd) slipBuffer.push(0xdb);
               else {
                 // protocol violation: discard frame
                 slipBuffer = [];
                 inSlipFrame = false;
               }
               escapeNext = false;
-            } else if (b === 0xDB) {
+            } else if (b === 0xdb) {
               escapeNext = true;
             } else {
               slipBuffer.push(b);
@@ -133,7 +146,7 @@ export function ESP32MultiDeviceWhisperer<
             continue;
           }
 
-          if (b === 0xC0 && conn.slipReadWrite) {
+          if (b === 0xc0 && conn.slipReadWrite) {
             // start of a SLIP frame
             inSlipFrame = true;
             slipBuffer = [];
@@ -142,7 +155,9 @@ export function ESP32MultiDeviceWhisperer<
           }
 
           // treat as normal text (correctly)
-          readBuffer += textDecoder.decode(new Uint8Array([b]), { stream: true });
+          readBuffer += textDecoder.decode(new Uint8Array([b]), {
+            stream: true,
+          });
 
           // check for newline
           let newlineIndex;
@@ -182,7 +197,7 @@ export function ESP32MultiDeviceWhisperer<
     } else {
       console.log("No transport yet");
     }
-  }
+  };
 
   const connect = async (
     uuid: string,
@@ -196,10 +211,10 @@ export function ESP32MultiDeviceWhisperer<
 
     if (!port) {
       port = await navigator.serial.requestPort({
-        filters: [{ usbVendorId: 0x303a }]
+        filters: [{ usbVendorId: 0x303a }],
       });
       base.updateConnection(uuid, (c) => ({ ...c, port }));
-    };
+    }
 
     base.updateConnection(uuid, (c) => ({ ...c, isConnecting: true }));
 
@@ -211,20 +226,27 @@ export function ESP32MultiDeviceWhisperer<
       const esploader = new ESPLoader({
         transport,
         baudrate: use_baudrate,
-        enableTracing: false
+        enableTracing: false,
       } as LoaderOptions);
 
       try {
         await esploader.main();
-      } catch (e) { console.log("failed to esploader.main()", e); return; };
+      } catch (e) {
+        console.log("failed to esploader.main()", e);
+        return;
+      }
 
       try {
         const mac = await esploader.chip.readMac(esploader);
-        console.log("Mac from device:", mac)
+        console.log("Mac from device:", mac);
         base.updateConnection(uuid, (c) => ({ ...c, deviceMac: mac }));
-      } catch (e) { console.log("Failed to read Mac address...") }
+      } catch (e) {
+        console.log("Failed to read Mac address...");
+      }
 
-      if (restart_on_connect) { await restartDevice(uuid, transport) };
+      if (restart_on_connect) {
+        await restartDevice(uuid, transport);
+      }
 
       base.updateConnection(uuid, (c) => ({
         ...c,
@@ -236,7 +258,7 @@ export function ESP32MultiDeviceWhisperer<
 
       base.appendLog(uuid, {
         level: 2,
-        message: "[✓] Serial connected"
+        message: "[✓] Serial connected",
       });
 
       await conn.onConnect?.();
@@ -246,12 +268,12 @@ export function ESP32MultiDeviceWhisperer<
       base.updateConnection(uuid, (c) => ({
         ...c,
         isConnected: false,
-        isConnecting: false
+        isConnecting: false,
       }));
 
       base.appendLog(uuid, {
         level: 0,
-        message: `[x] Serial connection error: ${err?.message || "Unknown error"}`
+        message: `[x] Serial connection error: ${err?.message || "Unknown error"}`,
       });
 
       await disconnect(uuid);
@@ -286,46 +308,74 @@ export function ESP32MultiDeviceWhisperer<
     await conn?.onDisconnect?.();
   };
 
-
-  const addConnection = async (
-    { uuid, propCreator }: AddConnectionProps<AppOrMessageLayer>
-  ) => {
+  const addConnection = async ({
+    uuid,
+    propCreator,
+  }: AddConnectionProps<AppOrMessageLayer>) => {
     const port = await navigator.serial.requestPort({
-      filters: [{ usbVendorId: 0x303a }]
+      filters: [{ usbVendorId: 0x303a }],
     });
 
+    let deviceId = uuid;
+
+    // If no UUID provided, try to read the MAC address before registering the connection
+    if (!uuid) {
+      // 1. Interrogate the port for the MAC address BEFORE registering the connection
+      try {
+        const tempTransport = new Transport(port, false, false);
+        const tempLoader = new ESPLoader({
+          transport: tempTransport,
+          baudrate: 115200,
+          enableTracing: false,
+        } as LoaderOptions);
+
+        await tempLoader.main();
+        const mac = await tempLoader.chip.readMac(tempLoader);
+        if (mac) {
+          deviceId = mac; // Swap 'unnamed_device_0' for the actual MAC
+        }
+
+        // Disconnect to release the port so connect() can start fresh
+        await tempTransport.disconnect();
+      } catch (e) {
+        console.warn(
+          "Failed to pre-fetch MAC address. Falling back to default UUID.",
+          e,
+        );
+      }
+    }
+
+    // 2. Register the connection using the real MAC address
     const return_uuid = await base.addConnection({
-      uuid,
+      uuid: deviceId,
       propCreator: (id) => {
         const props = propCreator?.(id);
         return {
           send: (d) => defaultSend(id, d),
           onReceive: (d) => defaultOnReceive(id, d),
           port,
-          // Initial connection state
           ...base.createInitialConnectionState(id),
-          // From props
-          ...props
-        } as Partial<AppOrMessageLayer>;
-      }
+          deviceMac: deviceId, // Lock it in immediately
+          ...props,
+        };
+      },
     });
 
-    const conn = base.getConnection(return_uuid)
-    if (conn?.autoConnect)
-      await connect(return_uuid)
+    const conn = base.getConnection(return_uuid);
+    if (conn?.autoConnect) await connect(return_uuid);
 
-    return return_uuid
+    return return_uuid;
   };
 
   const removeConnection = async (uuid: string) => {
     try {
       await disconnect(uuid);
-    } catch (e) { };
+    } catch (e) {}
     base.removeConnection(uuid);
   };
 
   const reconnectAll = async (...connectionProps: any) => {
-    const connectionIds = base.connections.map(c => c.uuid);
+    const connectionIds = base.connections.map((c) => c.uuid);
 
     await Promise.all(
       connectionIds.map(async (id) => {
@@ -334,18 +384,26 @@ export function ESP32MultiDeviceWhisperer<
         await disconnect(c.uuid);
         await new Promise((res) => setTimeout(res, 250));
         return connect(c.uuid, ...connectionProps);
-      })
+      }),
     );
   };
 
   // This function now handles an entire device flashing session
-  const handleFlashFirmware = async (uuid: string, assetsToFlash: { blob: Blob, address: number }[]) => {
+  const handleFlashFirmware = async (
+    uuid: string,
+    assetsToFlash: { blob: Blob; address: number }[],
+  ) => {
     const conn = base.getConnection(uuid);
     if (!conn || !conn.port || assetsToFlash.length === 0) return;
 
     await disconnect(uuid);
 
-    base.updateConnection(uuid, (c) => ({ ...c, isFlashing: true, flashProgress: 0, flashError: undefined }));
+    base.updateConnection(uuid, (c) => ({
+      ...c,
+      isFlashing: true,
+      flashProgress: 0,
+      flashError: undefined,
+    }));
 
     try {
       // --- Connect ONCE ---
@@ -353,12 +411,15 @@ export function ESP32MultiDeviceWhisperer<
       const esploader = new ESPLoader({
         transport,
         baudrate: 921600,
-        enableTracing: false
+        enableTracing: false,
       } as LoaderOptions);
 
       try {
         await esploader.main();
-      } catch (e) { console.log("failed to esploader.main()", e); return; };
+      } catch (e) {
+        console.log("failed to esploader.main()", e);
+        return;
+      }
 
       // --- Prepare an ARRAY of files for the library ---
       const fileArray = await Promise.all(
@@ -368,7 +429,7 @@ export function ESP32MultiDeviceWhisperer<
             .map((b) => String.fromCharCode(b))
             .join("");
           return { data: binaryString, address };
-        })
+        }),
       );
 
       const flashOptions: FlashOptions = {
@@ -381,8 +442,13 @@ export function ESP32MultiDeviceWhisperer<
         reportProgress: (fileIndex, written, total) => {
           // You can enhance progress reporting to show which file is being flashed
           const progress = (written / total) * 100;
-          console.log(`Flashing file ${fileIndex + 1}/${fileArray.length}: ${progress.toFixed(1)}%`);
-          base.updateConnection(uuid, (c) => ({ ...c, flashProgress: progress }));
+          console.log(
+            `Flashing file ${fileIndex + 1}/${fileArray.length}: ${progress.toFixed(1)}%`,
+          );
+          base.updateConnection(uuid, (c) => ({
+            ...c,
+            flashProgress: progress,
+          }));
         },
       };
 
@@ -390,7 +456,9 @@ export function ESP32MultiDeviceWhisperer<
       try {
         base.updateConnection(uuid, (c) => ({ ...c, flashProgress: -1 }));
         await esploader.writeFlash(flashOptions);
-      } catch (e) { console.log("failed to esploader.writeFlash", e) };
+      } catch (e) {
+        console.log("failed to esploader.writeFlash", e);
+      }
 
       // --- Disconnect ---
       await esploader.after();
@@ -403,7 +471,11 @@ export function ESP32MultiDeviceWhisperer<
         await conn.port?.close();
       }
 
-      base.updateConnection(uuid, (c) => ({ ...c, isFlashing: false, flashProgress: 100 }));
+      base.updateConnection(uuid, (c) => ({
+        ...c,
+        isFlashing: false,
+        flashProgress: 100,
+      }));
     } catch (e: any) {
       console.error(`[${uuid}] Flashing failed:`, e);
       base.updateConnection(uuid, (c) => ({
@@ -415,8 +487,8 @@ export function ESP32MultiDeviceWhisperer<
   };
 
   useEffect(() => {
-    base.setIsReady(true) // Ready on page load by default
-  }, [])
+    base.setIsReady(true); // Ready on page load by default
+  }, []);
 
   return {
     ...base,
@@ -425,6 +497,6 @@ export function ESP32MultiDeviceWhisperer<
     connect,
     disconnect,
     reconnectAll,
-    handleFlashFirmware
+    handleFlashFirmware,
   };
 }
