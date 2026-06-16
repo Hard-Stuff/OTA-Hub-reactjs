@@ -1,6 +1,6 @@
 import {
   DeviceConnectionState,
-  MultiDeviceWhisperer,
+  useMultiDeviceWhisperer,
   AddConnectionProps,
   DeviceWhispererProps,
 } from "../base/device-whisperer.js";
@@ -199,10 +199,10 @@ export type SerialConnectionState = DeviceConnectionState & {
   slipReadWrite?: boolean;
 };
 
-export function SerialMultiDeviceWhisperer<
+export function useSerialMultiDeviceWhisperer<
   AppOrMessageLayer extends SerialConnectionState,
 >({ ...props }: DeviceWhispererProps<AppOrMessageLayer> = {}) {
-  const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
+  const base = useMultiDeviceWhisperer<AppOrMessageLayer>(props);
 
   const releasePortByDefaultRef = useRef(false);
   const [releasePortByDefaultState, setReleasePortByDefaultState] =

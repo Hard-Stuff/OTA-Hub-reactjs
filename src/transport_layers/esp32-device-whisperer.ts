@@ -5,7 +5,7 @@ import {
   AddConnectionProps,
   DeviceConnectionState,
   DeviceWhispererProps,
-  MultiDeviceWhisperer,
+  useMultiDeviceWhisperer,
 } from "../base/device-whisperer.js";
 
 /*
@@ -38,7 +38,7 @@ export type FlashFirmwareProps = {
   fileArray?: FlashOptions["fileArray"];
 };
 
-export function ESP32MultiDeviceWhisperer<
+export function useESP32MultiDeviceWhisperer<
   AppOrMessageLayer extends ESP32ConnectionState,
 >(
   {
@@ -48,7 +48,7 @@ export function ESP32MultiDeviceWhisperer<
     releasePortByDefault: boolean;
   } & DeviceWhispererProps<AppOrMessageLayer> = { releasePortByDefault: true },
 ) {
-  const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
+  const base = useMultiDeviceWhisperer<AppOrMessageLayer>(props);
   const defaultOnReceive = (uuid: string, data: string | Uint8Array) => {
     const text =
       typeof data === "string" ? data : new TextDecoder().decode(data);

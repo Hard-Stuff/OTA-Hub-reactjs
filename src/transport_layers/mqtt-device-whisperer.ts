@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   DeviceConnectionState,
-  MultiDeviceWhisperer,
+  useMultiDeviceWhisperer,
   AddConnectionProps,
   DeviceWhispererProps,
 } from "../base/device-whisperer.js";
@@ -38,7 +38,7 @@ export type MQTTConnectionState = DeviceConnectionState & {
   touchHeartbeat?: () => void;
 };
 
-export function MQTTMultiDeviceWhisperer<
+export function useMQTTMultiDeviceWhisperer<
   AppOrMessageLayer extends MQTTConnectionState,
 >({
   serverUrl,
@@ -68,7 +68,7 @@ export function MQTTMultiDeviceWhisperer<
   serverConnectOn?: boolean;
   enableWatchdog?: boolean;
 } & DeviceWhispererProps<AppOrMessageLayer>) {
-  const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
+  const base = useMultiDeviceWhisperer<AppOrMessageLayer>(props);
 
   const clientRef = useRef<mqtt.MqttClient | null>(null);
   const isUnmountedRef = useRef(false);
@@ -188,7 +188,7 @@ export function MQTTMultiDeviceWhisperer<
   const connectToMQTTServer = async () => {
     if (!serverUrl && !serverUrlFnc) {
       console.error(
-        "MQTT MultiDeviceWhisperer requires either serverUrl or serverUrlFnc",
+        "MQTT useMultiDeviceWhisperer requires either serverUrl or serverUrlFnc",
       );
       return;
     }

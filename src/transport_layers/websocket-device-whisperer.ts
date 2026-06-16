@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import {
   DeviceConnectionState,
-  MultiDeviceWhisperer,
+  useMultiDeviceWhisperer,
   AddConnectionProps,
 } from "../base/device-whisperer.js";
 
@@ -29,7 +29,7 @@ export type DeviceObjectResponse = {
   deviceLastCommTime: Date | null;
 };
 
-export function WebsocketMultiDeviceWhisperer<
+export function useWebsocketMultiDeviceWhisperer<
   AppOrMessageLayer extends WebsocketConnectionState,
 >({
   server_url,
@@ -39,7 +39,7 @@ export function WebsocketMultiDeviceWhisperer<
   server_url: string;
   server_port: number;
 }) {
-  const base = MultiDeviceWhisperer<AppOrMessageLayer>(props);
+  const base = useMultiDeviceWhisperer<AppOrMessageLayer>(props);
 
   const defaultOnReceive = (
     uuid: string,

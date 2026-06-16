@@ -1,7 +1,7 @@
 import {
   AddConnectionProps,
   DeviceConnectionState,
-  MultiDeviceWhisperer,
+  useMultiDeviceWhisperer,
 } from "../base/device-whisperer.js";
 
 /*
@@ -17,7 +17,7 @@ import {
 */
 
 export type TopicHandlerContext<AppLayer extends DeviceConnectionState> = {
-  base: ReturnType<typeof MultiDeviceWhisperer<AppLayer>>;
+  base: ReturnType<typeof useMultiDeviceWhisperer<AppLayer>>;
   uuid: string;
 };
 
@@ -38,7 +38,7 @@ export type ProtobufDeviceWhispererProps<
   MessageRX = any,
   MessageTX = any,
 > = {
-  transportLayer: ReturnType<typeof MultiDeviceWhisperer<AppLayer>>;
+  transportLayer: ReturnType<typeof useMultiDeviceWhisperer<AppLayer>>;
   encodeRX: (message: MessageTX) => Uint8Array;
   decodeTX: (bytes: Uint8Array) => MessageRX;
   messageTypeField: keyof MessageRX;
@@ -47,7 +47,7 @@ export type ProtobufDeviceWhispererProps<
   expectLength?: boolean;
 };
 
-export function ProtobufMultiDeviceWhisperer<
+export function useProtobufMultiDeviceWhisperer<
   AppLayer extends DeviceConnectionState,
   Topic extends string | number,
   MessageRX = any,

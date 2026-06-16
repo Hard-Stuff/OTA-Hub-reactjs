@@ -79,7 +79,7 @@ export type DeviceWhispererProps<T extends DeviceConnectionState> = {
 /* One Device Whisperer is used for all like-devices, such as all Serial with Protobuf.
    Any e.g. Serial without Protobuf, or LoRaWAN etc. devices would be handled via a separate device whisperer
 */
-export function MultiDeviceWhisperer<T extends DeviceConnectionState>({
+export function useMultiDeviceWhisperer<T extends DeviceConnectionState>({
   createInitialConnectionState = createDefaultInitialDeviceState as (
     uuid: string,
   ) => Partial<T>,
