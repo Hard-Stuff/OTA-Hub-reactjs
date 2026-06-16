@@ -26,6 +26,7 @@ export type ESP32ConnectionState = DeviceConnectionState & {
   baudrate?: number;
   transport?: Transport;
   esp?: ESPLoader;
+  reader?: AsyncGenerator<Uint8Array>;
   slipReadWrite?: boolean;
   isFlashing: boolean;
   flashProgress: number;
@@ -90,9 +91,10 @@ export function useESP32MultiDeviceWhisperer<
     let inSlipFrame = false; // are we inside a SLIP frame?
     let escapeNext = false;
 
-    try {
-      const reader = transport.rawRead();
+    const reader = transport.rawRead();
+    base.updateConnection(uuid, (c) => ({ ...c, reader }));
 
+    try {
       while (true) {
         const conn = base.getConnection(uuid);
         if (!conn) {
@@ -176,6 +178,8 @@ export function useESP32MultiDeviceWhisperer<
         message: `[!] Read loop error: ${e}`,
       });
     } finally {
+      // Clear reader state so it's fresh for next connect
+      base.updateConnection(uuid, (c) => ({ ...c, reader: undefined }));
       base.appendLog(uuid, {
         level: 0,
         message: "[!] Serial disconnected",
@@ -251,6 +255,7 @@ export function useESP32MultiDeviceWhisperer<
       base.updateConnection(uuid, (c) => ({
         ...c,
         transport,
+        esp: esploader,
         baudrate: use_baudrate,
         isConnected: true,
         isConnecting: false,
@@ -263,7 +268,11 @@ export function useESP32MultiDeviceWhisperer<
 
       await conn.onConnect?.();
 
-      await readLoop(uuid, transport);
+      // FIRE AND FORGET
+      // We initiate the read loop but DO NOT await it, returning control immediately.
+      readLoop(uuid, transport).catch((e) =>
+        console.error(`[${uuid}] Background read loop failed:`, e),
+      );
     } catch (err: any) {
       base.updateConnection(uuid, (c) => ({
         ...c,
@@ -283,6 +292,18 @@ export function useESP32MultiDeviceWhisperer<
   const disconnect = async (uuid: string, timeout = 2000) => {
     const conn = base.getConnection(uuid);
 
+    // 1. POLITELY KILL THE READER
+    // If we have an active reader generator in state, call return() to
+    // gracefully resolve the pending reader.next() in the background loop
+    if (conn?.reader && typeof conn.reader.return === "function") {
+      try {
+        // @ts-ignore - The underlying AsyncGenerator handles return gracefully
+        await conn.reader.return();
+      } catch (e) {
+        console.warn(`[${uuid}] Error returning generator lock:`, e);
+      }
+    }
+
     if (conn?.transport) {
       try {
         // Attempt disconnect, but don’t hang if the port is crashed
@@ -298,8 +319,9 @@ export function useESP32MultiDeviceWhisperer<
     // Always clear the transport and reset connection state
     base.updateConnection(uuid, (c) => ({
       ...c,
-      port: releasePortByDefault ? null : c.port,
-      transport: releasePortByDefault ? null : c.transport,
+      port: releasePortByDefault ? undefined : c.port,
+      transport: releasePortByDefault ? undefined : c.transport,
+      reader: undefined, // Guarantee reader is cleared out
       isConnected: false,
       isConnecting: false,
       autoConnect: false,
@@ -394,8 +416,18 @@ export function useESP32MultiDeviceWhisperer<
     assetsToFlash: { blob: Blob; address: number }[],
   ) => {
     const conn = base.getConnection(uuid);
-    if (!conn || !conn.port || assetsToFlash.length === 0) return;
 
+    // 1. Bail if we don't have the required state
+    if (
+      !conn ||
+      !conn.transport ||
+      !conn.port ||
+      !conn.esp ||
+      assetsToFlash.length === 0
+    )
+      return;
+
+    // Gracefully cancel reader and completely drop the transport natively
     await disconnect(uuid);
 
     base.updateConnection(uuid, (c) => ({
@@ -476,6 +508,9 @@ export function useESP32MultiDeviceWhisperer<
         isFlashing: false,
         flashProgress: 100,
       }));
+
+      // --- Reconnect the standard monitor ---
+      await connect(uuid);
     } catch (e: any) {
       console.error(`[${uuid}] Flashing failed:`, e);
       base.updateConnection(uuid, (c) => ({
@@ -483,6 +518,9 @@ export function useESP32MultiDeviceWhisperer<
         isFlashing: false,
         flashError: e?.message ?? "Unknown error",
       }));
+
+      // Attempt recovery
+      await connect(uuid);
     }
   };
 
