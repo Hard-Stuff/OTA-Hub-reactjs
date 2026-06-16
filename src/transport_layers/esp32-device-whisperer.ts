@@ -218,6 +218,23 @@ export function useESP32MultiDeviceWhisperer<
         filters: [{ usbVendorId: 0x303a }],
       });
       base.updateConnection(uuid, (c) => ({ ...c, port }));
+    } else {
+      try {
+        const oldInfo = port.getInfo();
+        const authorizedPorts = await navigator.serial.getPorts();
+        const freshPort = authorizedPorts.find(
+          (p) =>
+            p.getInfo().usbVendorId === oldInfo.usbVendorId &&
+            p.getInfo().usbProductId === oldInfo.usbProductId,
+        );
+
+        if (freshPort) {
+          port = freshPort; // Swap out the dead pointer
+          base.updateConnection(uuid, (c) => ({ ...c, port }));
+        }
+      } catch (e) {
+        console.warn(`[${uuid}] Failed to silently heal port reference:`, e);
+      }
     }
 
     base.updateConnection(uuid, (c) => ({ ...c, isConnecting: true }));

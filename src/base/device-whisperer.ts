@@ -74,6 +74,7 @@ export function createDefaultInitialDeviceState<
 
 export type DeviceWhispererProps<T extends DeviceConnectionState> = {
   createInitialConnectionState?: (uuid: string) => Partial<T>;
+  setFocussedConnectionOnAddConnection?: boolean;
 };
 
 /* One Device Whisperer is used for all like-devices, such as all Serial with Protobuf.
@@ -83,6 +84,7 @@ export function useMultiDeviceWhisperer<T extends DeviceConnectionState>({
   createInitialConnectionState = createDefaultInitialDeviceState as (
     uuid: string,
   ) => Partial<T>,
+  setFocussedConnectionOnAddConnection,
 }: DeviceWhispererProps<T> = {}) {
   const [connections, setConnections] = useState<T[]>([]);
   const connectionsRef = useRef<Map<string, T>>(new Map());
@@ -132,6 +134,9 @@ export function useMultiDeviceWhisperer<T extends DeviceConnectionState>({
 
     connectionsRef.current.set(uuid, newConnection);
     setConnections(Array.from(connectionsRef.current.values()));
+
+    // Automatically set to the latest connection
+    if (!!setFocussedConnectionOnAddConnection) setFocussedConnection(uuid);
 
     return uuid;
   };
