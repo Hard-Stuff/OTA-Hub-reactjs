@@ -26,6 +26,7 @@ export type ESP32ConnectionState = DeviceConnectionState & {
   baudrate?: number;
   transport?: Transport;
   esp?: ESPLoader;
+  debugLogging?: false;
   reader?: AsyncGenerator<Uint8Array>;
   slipReadWrite?: boolean;
   isFlashing: boolean;
@@ -248,6 +249,7 @@ export function useESP32MultiDeviceWhisperer<
         transport,
         baudrate: use_baudrate,
         enableTracing: false,
+        debugLogging: !!conn.debugLogging,
       } as LoaderOptions);
 
       try {
@@ -309,12 +311,10 @@ export function useESP32MultiDeviceWhisperer<
   const disconnect = async (uuid: string, timeout = 2000) => {
     const conn = base.getConnection(uuid);
 
-    // 1. POLITELY KILL THE READER
-    // If we have an active reader generator in state, call return() to
-    // gracefully resolve the pending reader.next() in the background loop
+    // 1. Politely kill our high-level generator
     if (conn?.reader && typeof conn.reader.return === "function") {
       try {
-        // @ts-ignore - The underlying AsyncGenerator handles return gracefully
+        // @ts-ignore
         await conn.reader.return();
       } catch (e) {
         console.warn(`[${uuid}] Error returning generator lock:`, e);
@@ -323,7 +323,18 @@ export function useESP32MultiDeviceWhisperer<
 
     if (conn?.transport) {
       try {
-        // Attempt disconnect, but don’t hang if the port is crashed
+        // 2. AGGRESSIVE LOCK REMOVAL (The Fix)
+        // Dig into esptool-js's internal state and force the native reader to release.
+        // If we don't do this, transport.disconnect() will hang and fail to close the port.
+        const internalReader = (conn.transport as any).reader;
+        if (internalReader) {
+          await internalReader.cancel().catch(() => {});
+          if (typeof internalReader.releaseLock === "function") {
+            internalReader.releaseLock();
+          }
+        }
+
+        // 3. Now that locks are cleared, attempt standard disconnect
         await Promise.race([
           conn.transport.disconnect(),
           new Promise((resolve) => setTimeout(resolve, timeout)),
@@ -333,7 +344,23 @@ export function useESP32MultiDeviceWhisperer<
       }
     }
 
-    // Always clear the transport and reset connection state
+    // 4. NATIVE SAFETY NET
+    // Guarantee the port is closed natively just in case the transport failed
+    if (conn?.port) {
+      try {
+        if (conn.port.readable?.locked) {
+          await conn.port.readable.cancel().catch(() => {});
+        }
+        if (conn.port.writable?.locked) {
+          await conn.port.writable.abort().catch(() => {});
+        }
+        await conn.port.close().catch(() => {});
+      } catch (e) {
+        // It will throw if already closed, which is perfectly fine.
+      }
+    }
+
+    // 5. Always clear the transport and reset connection state
     base.updateConnection(uuid, (c) => ({
       ...c,
       port: releasePortByDefault ? undefined : c.port,
@@ -432,43 +459,41 @@ export function useESP32MultiDeviceWhisperer<
     uuid: string,
     assetsToFlash: { blob: Blob; address: number }[],
   ) => {
+    // Capture the original connection and port reference before disconnect
     const conn = base.getConnection(uuid);
 
     // 1. Bail if we don't have the required state
-    if (
-      !conn ||
-      !conn.transport ||
-      !conn.port ||
-      !conn.esp ||
-      assetsToFlash.length === 0
-    )
-      return;
+    if (!conn || !conn.port || assetsToFlash.length === 0) return;
 
     // Gracefully cancel reader and completely drop the transport natively
     await disconnect(uuid);
 
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
     base.updateConnection(uuid, (c) => ({
       ...c,
+      port: conn.port, // Restore the port into state in case disconnect wiped it
       isFlashing: true,
       flashProgress: 0,
       flashError: undefined,
     }));
 
+    // Declare outside the try block (Fixes variable shadowing)
+    let transport: Transport | undefined;
+    let esploader: ESPLoader | undefined;
+
     try {
       // --- Connect ONCE ---
-      const transport = new Transport(conn.port, true);
-      const esploader = new ESPLoader({
+      transport = new Transport(conn.port, true);
+      esploader = new ESPLoader({
         transport,
         baudrate: 921600,
         enableTracing: false,
+        // debugLogging: !!conn.debugLogging,
       } as LoaderOptions);
 
-      try {
-        await esploader.main();
-      } catch (e) {
-        console.log("failed to esploader.main()", e);
-        return;
-      }
+      // This may fail, that'll bubble the failure up to the upper try/catch
+      await esploader.main();
 
       // --- Prepare an ARRAY of files for the library ---
       const fileArray = await Promise.all(
@@ -481,35 +506,42 @@ export function useESP32MultiDeviceWhisperer<
         }),
       );
 
+      let lastRenderTime = 0;
+
       const flashOptions: FlashOptions = {
-        fileArray, // Pass the whole array here
+        fileArray,
         flashSize: "keep",
         flashMode: "qio",
         flashFreq: "80m",
         eraseAll: fileArray.length > 1, // Writing more than 1 thing, so likely writing partitions.
         compress: true,
         reportProgress: (fileIndex, written, total) => {
-          // You can enhance progress reporting to show which file is being flashed
           const progress = (written / total) * 100;
-          console.log(
-            `Flashing file ${fileIndex + 1}/${fileArray.length}: ${progress.toFixed(1)}%`,
-          );
-          base.updateConnection(uuid, (c) => ({
-            ...c,
-            flashProgress: progress,
-          }));
+          const now = performance.now();
+
+          // Throttle UI updates to at most once every 100ms (~10 FPS),
+          // but ALWAYS ensure the final 100% tick renders.
+          if (now - lastRenderTime > 100 || written === total) {
+            lastRenderTime = now;
+
+            // Optional: Only log every 100ms as well to prevent console spam
+            console.log(
+              `Flashing file ${fileIndex + 1}/${fileArray.length}: ${progress.toFixed(1)}%`,
+            );
+
+            base.updateConnection(uuid, (c) => ({
+              ...c,
+              flashProgress: progress,
+            }));
+          }
         },
       };
 
       // --- Call writeFlash ONCE with all files ---
-      try {
-        base.updateConnection(uuid, (c) => ({ ...c, flashProgress: -1 }));
-        await esploader.writeFlash(flashOptions);
-      } catch (e) {
-        console.log("failed to esploader.writeFlash", e);
-      }
+      base.updateConnection(uuid, (c) => ({ ...c, flashProgress: -1 }));
+      await esploader.writeFlash(flashOptions);
 
-      // --- Disconnect ---
+      // --- Disconnect cleanly ---
       await esploader.after();
       try {
         await transport.disconnect();
