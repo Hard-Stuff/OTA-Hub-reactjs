@@ -221,23 +221,6 @@ export function useESP32MultiDeviceWhisperer<
         filters: [{ usbVendorId: 0x303a }],
       });
       base.updateConnection(uuid, (c) => ({ ...c, port }));
-    } else {
-      try {
-        const oldInfo = port.getInfo();
-        const authorizedPorts = await navigator.serial.getPorts();
-        const freshPort = authorizedPorts.find(
-          (p) =>
-            p.getInfo().usbVendorId === oldInfo.usbVendorId &&
-            p.getInfo().usbProductId === oldInfo.usbProductId,
-        );
-
-        if (freshPort) {
-          port = freshPort; // Swap out the dead pointer
-          base.updateConnection(uuid, (c) => ({ ...c, port }));
-        }
-      } catch (e) {
-        console.warn(`[${uuid}] Failed to silently heal port reference:`, e);
-      }
     }
 
     base.updateConnection(uuid, (c) => ({ ...c, isConnecting: true }));
@@ -438,7 +421,6 @@ export function useESP32MultiDeviceWhisperer<
     const prevAutoConnect = conn.autoConnect;
     base.updateConnection(uuid, (c) => ({
       ...c,
-      port: conn.port, // Restore the port into state in case disconnect wiped it
       isFlashing: true,
       flashProgress: 0,
       flashError: undefined,
