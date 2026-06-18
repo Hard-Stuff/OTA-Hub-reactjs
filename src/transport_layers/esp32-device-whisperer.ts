@@ -27,7 +27,6 @@ export type ESP32ConnectionState = DeviceConnectionState & {
   transport?: Transport;
   esp?: ESPLoader;
   debugLogging?: false;
-  reader?: AsyncGenerator<Uint8Array>;
   slipReadWrite?: boolean;
   isFlashing: boolean;
   flashProgress: number;
@@ -93,7 +92,7 @@ export function useESP32MultiDeviceWhisperer<
     let escapeNext = false;
 
     const reader = transport.rawRead();
-    base.updateConnection(uuid, (c) => ({ ...c, reader }));
+    base.updateConnection(uuid, (c) => ({ ...c }));
 
     try {
       while (true) {
@@ -102,6 +101,8 @@ export function useESP32MultiDeviceWhisperer<
           console.log("Kack!");
           return;
         }
+
+        if (conn.isFlashing || !conn.isConnected) break;
 
         const { value, done } = await reader.next();
         if (done || !value) break;
@@ -173,19 +174,20 @@ export function useESP32MultiDeviceWhisperer<
           }
         }
       }
+      await new Promise((resolve) => setTimeout(resolve, 100)); // Little breather before attempt any disconnects
     } catch (e) {
       base.appendLog(uuid, {
         level: 0,
         message: `[!] Read loop error: ${e}`,
       });
     } finally {
-      // Clear reader state so it's fresh for next connect
-      base.updateConnection(uuid, (c) => ({ ...c, reader: undefined }));
-      base.appendLog(uuid, {
-        level: 0,
-        message: "[!] Serial disconnected",
-      });
-      await disconnect(uuid);
+      base.updateConnection(uuid, (c) => ({ ...c }));
+
+      const conn = base.getConnection(uuid);
+
+      if (conn?.isConnected) {
+        await disconnect(uuid);
+      }
     }
   };
 
@@ -248,7 +250,7 @@ export function useESP32MultiDeviceWhisperer<
       const esploader = new ESPLoader({
         transport,
         baudrate: use_baudrate,
-        enableTracing: false,
+        enableTracing: !!conn.debugLogging,
         debugLogging: !!conn.debugLogging,
       } as LoaderOptions);
 
@@ -311,30 +313,9 @@ export function useESP32MultiDeviceWhisperer<
   const disconnect = async (uuid: string, timeout = 2000) => {
     const conn = base.getConnection(uuid);
 
-    // 1. Politely kill our high-level generator
-    if (conn?.reader && typeof conn.reader.return === "function") {
-      try {
-        // @ts-ignore
-        await conn.reader.return();
-      } catch (e) {
-        console.warn(`[${uuid}] Error returning generator lock:`, e);
-      }
-    }
-
     if (conn?.transport) {
       try {
-        // 2. AGGRESSIVE LOCK REMOVAL (The Fix)
-        // Dig into esptool-js's internal state and force the native reader to release.
-        // If we don't do this, transport.disconnect() will hang and fail to close the port.
-        const internalReader = (conn.transport as any).reader;
-        if (internalReader) {
-          await internalReader.cancel().catch(() => {});
-          if (typeof internalReader.releaseLock === "function") {
-            internalReader.releaseLock();
-          }
-        }
-
-        // 3. Now that locks are cleared, attempt standard disconnect
+        // Attempt disconnect, but don’t hang if the port is crashed
         await Promise.race([
           conn.transport.disconnect(),
           new Promise((resolve) => setTimeout(resolve, timeout)),
@@ -344,32 +325,21 @@ export function useESP32MultiDeviceWhisperer<
       }
     }
 
-    // 4. NATIVE SAFETY NET
-    // Guarantee the port is closed natively just in case the transport failed
-    if (conn?.port) {
-      try {
-        if (conn.port.readable?.locked) {
-          await conn.port.readable.cancel().catch(() => {});
-        }
-        if (conn.port.writable?.locked) {
-          await conn.port.writable.abort().catch(() => {});
-        }
-        await conn.port.close().catch(() => {});
-      } catch (e) {
-        // It will throw if already closed, which is perfectly fine.
-      }
-    }
-
-    // 5. Always clear the transport and reset connection state
+    // Always clear the transport and reset connection state
     base.updateConnection(uuid, (c) => ({
       ...c,
-      port: releasePortByDefault ? undefined : c.port,
-      transport: releasePortByDefault ? undefined : c.transport,
-      reader: undefined, // Guarantee reader is cleared out
+      port: releasePortByDefault ? null : c.port,
+      transport: releasePortByDefault ? null : c.transport,
+      esp: releasePortByDefault ? null : c.transport,
       isConnected: false,
       isConnecting: false,
       autoConnect: false,
     }));
+
+    base.appendLog(uuid, {
+      level: 0,
+      message: "[!] Serial disconnected",
+    });
 
     await conn?.onDisconnect?.();
   };
@@ -465,31 +435,28 @@ export function useESP32MultiDeviceWhisperer<
     // 1. Bail if we don't have the required state
     if (!conn || !conn.port || assetsToFlash.length === 0) return;
 
-    // Gracefully cancel reader and completely drop the transport natively
-    await disconnect(uuid);
-
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
+    const prevAutoConnect = conn.autoConnect;
     base.updateConnection(uuid, (c) => ({
       ...c,
       port: conn.port, // Restore the port into state in case disconnect wiped it
       isFlashing: true,
       flashProgress: 0,
       flashError: undefined,
+      autoConnect: false,
     }));
 
-    // Declare outside the try block (Fixes variable shadowing)
-    let transport: Transport | undefined;
-    let esploader: ESPLoader | undefined;
+
+    if (conn.isConnected) await disconnect(uuid);
+    await new Promise((resolve) => setTimeout(resolve, 400));
 
     try {
       // --- Connect ONCE ---
-      transport = new Transport(conn.port, true);
-      esploader = new ESPLoader({
+      const transport = new Transport(conn.port, true);
+      const esploader = new ESPLoader({
         transport,
         baudrate: 921600,
-        enableTracing: false,
-        // debugLogging: !!conn.debugLogging,
+        enableTracing: !!conn.debugLogging,
+        debugLogging: !!conn.debugLogging,
       } as LoaderOptions);
 
       // This may fail, that'll bubble the failure up to the upper try/catch
@@ -556,10 +523,8 @@ export function useESP32MultiDeviceWhisperer<
         ...c,
         isFlashing: false,
         flashProgress: 100,
+        autoConnect: prevAutoConnect,
       }));
-
-      // --- Reconnect the standard monitor ---
-      await connect(uuid);
     } catch (e: any) {
       console.error(`[${uuid}] Flashing failed:`, e);
       base.updateConnection(uuid, (c) => ({
@@ -569,6 +534,7 @@ export function useESP32MultiDeviceWhisperer<
       }));
 
       // Attempt recovery
+    } finally {
       await connect(uuid);
     }
   };
